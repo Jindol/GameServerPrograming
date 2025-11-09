@@ -1,5 +1,5 @@
 ﻿//
-// ASCIIQuest_S/ASCIIQuest_S.cs (수정된 코드)
+// ASCIIQuest_S/ASCIIQuest_S.cs (디버그 로그가 추가된 전체 코드)
 //
 using System;
 using System.Collections.Generic;
@@ -73,7 +73,7 @@ class MUDServer
         if (clients.Count >= 2)
         {
             Console.WriteLine("Max players reached. Rejecting new connection.");
-            byte[] rejectMsg = Encoding.UTF8.GetBytes("서버가 가득 찼습니다. 나중에 다시 시도해주세요.\n");
+            byte[] rejectMsg = Encoding.UTF8.GetBytes("서버가 가득 찼습니다. 나중에 다시 시도해주세요.|\n");
             tcpClient.GetStream().Write(rejectMsg, 0, rejectMsg.Length);
             tcpClient.Close();
 
@@ -176,7 +176,7 @@ class MUDServer
             client.State = ClientState.ChoosingNickname;
             client.GamePlayer = null;
             client.TempNickname = null;
-            client.NicknameBuffer.Clear(); // [신규] 닉네임 버퍼 초기화
+            client.NicknameBuffer.Clear(); 
             SendMessage(client, "다른 플레이어가 떠났습니다. 닉네임을 다시 입력하세요:\n> ");
         }
     }
@@ -189,7 +189,7 @@ class MUDServer
         ClientSession client = clients[clientId];
         string command = data.Trim(); 
         
-        // --- [1번 문제 수정] 닉네임 선택 상태 (서버 버퍼링) ---
+        // --- 1. 닉네임 선택 상태 (서버 버퍼링) ---
         if (client.State == ClientState.ChoosingNickname)
         {
             string key = command.ToUpper();
@@ -199,7 +199,6 @@ class MUDServer
             {
                 string nickname = client.NicknameBuffer.ToString().Trim();
                 
-                // 닉네임 유효성 검사
                 if (string.IsNullOrWhiteSpace(nickname) || nickname.Length > 10 || nickname.Contains(" "))
                 {
                     client.NicknameBuffer.Clear();
@@ -207,7 +206,6 @@ class MUDServer
                     return;
                 }
 
-                // 닉네임 중복 확인
                 if (gamePlayers.Values.Any(p => p.Username.Equals(nickname, StringComparison.OrdinalIgnoreCase)) ||
                     clients.Values.Any(c => c.ClientId != clientId && c.TempNickname != null && c.TempNickname.Equals(nickname, StringComparison.OrdinalIgnoreCase)))
                 {
@@ -216,7 +214,6 @@ class MUDServer
                     return;
                 }
 
-                // 닉네임 통과
                 client.TempNickname = nickname; 
                 client.State = ClientState.ChoosingClass; 
 
@@ -227,7 +224,7 @@ class MUDServer
                                             "(키보드 1, 2, 3 입력)";
                 SendMessage(client, classSelectionMsg);
             }
-            else if (key == "BACKSPACE") // 백스페이스 처리
+            else if (key == "BACKSPACE") 
             {
                 if (client.NicknameBuffer.Length > 0)
                 {
@@ -235,7 +232,6 @@ class MUDServer
                 }
                 SendMessage(client, currentPrompt + client.NicknameBuffer.ToString());
             }
-            // 일반 글자/숫자 키 처리
             else if (key.Length == 1 && (char.IsLetterOrDigit(key[0])))
             {
                 if(client.NicknameBuffer.Length < 10) client.NicknameBuffer.Append(key);
@@ -251,17 +247,16 @@ class MUDServer
                 if(client.NicknameBuffer.Length < 10) client.NicknameBuffer.Append(key[6]);
                 SendMessage(client, currentPrompt + client.NicknameBuffer.ToString());
             }
-            else if (key == "SPACEBAR") // 스페이스바
+            else if (key == "SPACEBAR") 
             {
                     if(client.NicknameBuffer.Length < 10) client.NicknameBuffer.Append(" ");
                     SendMessage(client, currentPrompt + client.NicknameBuffer.ToString());
             }
-            // 그 외 (W, A, S, D, ArrowKeys 등)는 무시
             return; 
         }
 
 
-        // --- [2번 문제 수정] 직업 선택 상태 ---
+        // --- 2. 직업 선택 상태 ---
         if (client.State == ClientState.ChoosingClass)
         {
             PlayerClass selectedClass;
@@ -276,7 +271,6 @@ class MUDServer
                 case "D3": case "NUMPAD3":
                     selectedClass = PlayerClass.Rogue; break;
                 default:
-                    // [FIX] 잘못된 입력 시 목록 다시 전송
                     string classSelectionMsg = $"잘못된 선택입니다. 1, 2, 3 중 입력.\n" +
                                                 $"반갑습니다, {client.TempNickname}님. 직업을 선택하세요:\n" +
                                                 "1. Warrior (시스템 방어자)\n" +
@@ -284,7 +278,7 @@ class MUDServer
                                                 "3. Rogue (정보 수집가)\n" +
                                                 "(키보드 1, 2, 3 입력)";
                     SendMessage(client, classSelectionMsg);
-                    return; // 
+                    return; 
             }
             
             Player gamePlayer = new Player(selectedClass, client.TempNickname); 
@@ -295,20 +289,50 @@ class MUDServer
             client.State = ClientState.Playing;  
 
             SendMessage(client, $"당신은 '{selectedClass}'입니다. 다른 플레이어를 기다립니다...");
-            Console.WriteLine($"Client {clientId} ({gamePlayer.Username}) selected {selectedClass}.");
+            // [핵심 디버그] 서버 콘솔에 로그 출력
+            Console.WriteLine($"[DEBUG] {gamePlayer.Username} (Client {clientId})가 직업 선택 완료. State=Playing으로 변경.");
+
+            if (clients.Count == 2)
+            {
+                Console.WriteLine("--- [DEBUG] 2명 접속됨. 상태 확인 ---");
+                try
+                {
+                    var p1 = clients.Values.ElementAt(0);
+                    var p2 = clients.Values.ElementAt(1);
+                    Console.WriteLine($"[DEBUG] P1 ({p1.TempNickname}) State: {p1.State}");
+                    Console.WriteLine($"[DEBUG] P2 ({p2.TempNickname}) State: {p2.State}");
+                    Console.WriteLine($"[DEBUG] clients.Count == 2: {clients.Count == 2}");
+                    Console.WriteLine($"[DEBUG] All(Playing)?: {clients.Values.All(c => c.State == ClientState.Playing)}");
+                }
+                catch(Exception e)
+                {
+                    Console.WriteLine($"[DEBUG] 로그 출력 중 오류: {e.Message}");
+                }
+                Console.WriteLine("-----------------------------------");
+            }
+            else
+            {
+                Console.WriteLine($"[DEBUG] 현재 접속 인원: {clients.Count}명. 2명 대기 중.");
+            }
+
 
             if (clients.Count == 2 && clients.Values.All(c => c.State == ClientState.Playing))
             {
+                Console.WriteLine("[DEBUG] 조건 충족! 게임 시작! BroadcastWorldState() 호출.");
                 Console.WriteLine("Both players ready. Starting ASCIIQuest!");
                 AddLog("두 명의 플레이어가 파티를 맺었습니다. 모험을 시작합니다!");
                 currentState = GameState.World;
                 currentPlayerTurn = gamePlayers.Values.First();
                 BroadcastWorldState();
             }
+            else
+            {
+                Console.WriteLine("[DEBUG] 조건 불충족. 게임 시작 대기 중.");
+            }
             return;
         }
 
-        // --- [3번 문제 수정] 플레이 중 상태 (키 입력 처리) ---
+        // --- 3. 플레이 중 상태 (키 입력 처리) ---
         if (client.State == ClientState.Playing)
         {
             if (currentPlayerTurn == null || client.GamePlayer != currentPlayerTurn)
@@ -317,7 +341,7 @@ class MUDServer
             }
 
             Player actingPlayer = client.GamePlayer; 
-            string key = command.ToUpper(); // 클라이언트가 보낸 ConsoleKey 문자열
+            string key = command.ToUpper(); 
 
             switch (currentState)
             {
@@ -367,10 +391,9 @@ class MUDServer
                 return;
             }
         }
-        currentPlayerTurn = null; // 살아있는 플레이어 없음
+        currentPlayerTurn = null; 
     }
 
-    // [수정] 'move' 명령어 대신 'W', 'A', 'S', 'D' 키를 직접 처리
     private bool ProcessWorldCommand(Player player, string key)
     {
         switch (key)
@@ -391,12 +414,12 @@ class MUDServer
             case "RIGHTARROW":
                 return ProcessPlayerMove(player, "right"); 
 
-            case "I": // [신규] 상태 보기
+            case "I": 
                 AddLog($"--- {player.Username} ({player.Class}) 상태 ---");
                 AddLog($"LV:{player.Level} HP:{player.HP}/{player.MaxHP} MP:{player.MP}/{player.MaxMP}");
                 AddLog($"ATK:{player.ATK} DEF:{player.DEF} STR:{player.STR} INT:{player.INT} DEX:{player.DEX}");
-                BroadcastWorldState(); // 로그 갱신을 위해 브로드캐스트
-                return false; // 턴 소모 안함
+                BroadcastWorldState(); 
+                return false; 
 
             default:
                 return false;
@@ -419,7 +442,7 @@ class MUDServer
         if (newX < 0 || newX >= MapWidth || newY < 0 || newY >= MapHeight)
         {
             AddLog("더 이상 갈 수 없는 곳입니다.");
-            BroadcastWorldState(); // [신규] 로그 갱신
+            BroadcastWorldState(); 
             return false;
         }
 
@@ -427,7 +450,7 @@ class MUDServer
         if (tile == '█')
         {
             AddLog("벽에 부딪혔습니다.");
-            BroadcastWorldState(); // [신규] 로그 갱신
+            BroadcastWorldState(); 
             return false;
         }
 
@@ -457,7 +480,7 @@ class MUDServer
         if (gamePlayers.Values.Any(p => p != player && p.X == newX && p.Y == newY))
         {
              AddLog("다른 플레이어와 겹칠 수 없습니다.");
-             BroadcastWorldState(); // [신규] 로그 갱신
+             BroadcastWorldState(); 
              return false;
         }
 
@@ -467,7 +490,6 @@ class MUDServer
         return true; 
     }
 
-    // [수정] '1', '2', '3', '4' 키를 직접 처리
     private void ProcessBattleCommand(Player player, string key)
     {
         if (currentBattleMonster == null)
@@ -508,7 +530,6 @@ class MUDServer
         }
     }
 
-    // [수정] 'Q', 'W', 'E', 'B' 키를 직접 처리
     private void ProcessSkillSelectCommand(Player player, string key)
     {
         bool skillUsed = false;
@@ -997,18 +1018,12 @@ class MUDServer
         }
     }
 
-    private void SendMessage(ClientSession client, string message, bool includeNewline = true)
+    private void SendMessage(ClientSession client, string message, bool includeNewline = true) 
     {
         try
         {
-            if (includeNewline)
-            {
-                client.Writer.WriteLine(message); 
-            }
-            else
-            {
-                client.Writer.Write(message); 
-            }
+            string singleLineMessage = message.Replace('\n', '|');
+            client.Writer.WriteLine(singleLineMessage);
         }
         catch (Exception ex)
         {
@@ -1034,7 +1049,6 @@ class MUDServer
     }
 }
 
-// [1번 문제 수정] 닉네임 버퍼 추가
 internal enum ClientState { ChoosingNickname, ChoosingClass, Playing }
 class ClientSession
 {
@@ -1045,7 +1059,7 @@ class ClientSession
     public string TempNickname { get; set; } 
     public StreamWriter Writer { get; } 
     public StreamReader Reader { get; } 
-    public StringBuilder NicknameBuffer { get; } = new StringBuilder(); // [신규]
+    public StringBuilder NicknameBuffer { get; } = new StringBuilder(); 
 
     public ClientSession(int clientId, TcpClient tcpClient)
     {

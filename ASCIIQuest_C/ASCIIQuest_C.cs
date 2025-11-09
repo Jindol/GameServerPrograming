@@ -1,5 +1,5 @@
 ﻿//
-// ASCIIQuest_C/ASCIIQuest_C.cs (수정된 코드)
+// ASCIIQuest_C/ASCIIQuest_C.cs (깜빡임 해결 최종 코드)
 //
 using System;
 using System.IO; 
@@ -23,7 +23,9 @@ class MUDClient
             writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
             reader = new StreamReader(stream, Encoding.UTF8);
             connected = true;
-            Console.WriteLine("서버에 연결되었습니다...");
+            
+            Console.Write("서버에 연결되었습니다..."); 
+            Thread.Sleep(500); 
 
             Console.CursorVisible = false;
             Console.Clear();
@@ -38,7 +40,7 @@ class MUDClient
         }
     }
 
-    // [핵심 수정] 서버로부터 화면 데이터를 받아 그리는 스레드
+    // [핵심 수정] 화면 렌더링 방식을 SetCursorPosition(0, 0)으로 변경
     private void StartReceivingData()
     {
         Thread thread = new Thread(() =>
@@ -47,50 +49,73 @@ class MUDClient
             {
                 while (connected)
                 {
-                    string fullScreenData = reader.ReadLine(); 
+                    string singleLineData = reader.ReadLine(); 
                     
-                    if (fullScreenData != null)
+                    if (singleLineData != null)
                     {
-                        // --- 1. 커서 보일지 결정 (닉네임 입력 중인지?) ---
-                        bool isPrompt = fullScreenData.TrimEnd().EndsWith("> ");
-                        if(isPrompt)
-                            Console.CursorVisible = true;
-                        else 
-                            Console.CursorVisible = false;
+                        string[] lines = singleLineData.Split('|');
 
-                        // --- 2. 화면 다시 그리기 (G와 유사하게) ---
-                        string[] lines = fullScreenData.Split('\n');
+                        // 1. 닉네임 프롬프트 확인 (커서 표시용)
+                        string lastMeaningfulLine = "";
+                        for(int i = lines.Length - 1; i >= 0; i--)
+                        {
+                            if (!string.IsNullOrEmpty(lines[i]))
+                            {
+                                lastMeaningfulLine = lines[i];
+                                break;
+                            }
+                        }
+                        bool isPrompt = lastMeaningfulLine.TrimEnd().EndsWith("> ");
                         
+                        // [핵심 수정] 2. Console.Clear() 대신 커서를 (0,0)으로 이동
+                        Console.SetCursorPosition(0, 0); 
+                        
+                        int lineCount = 0;
                         for (int y = 0; y < lines.Length; y++)
                         {
+                            // 마지막 빈 줄은 무시
+                            if (y == lines.Length - 1 && string.IsNullOrEmpty(lines[y]))
+                            {
+                                continue;
+                            }
+
                             string line = lines[y].TrimEnd('\r');
-                            
-                            // [수정] 0, Y 좌표로 이동해서 한 줄씩 쓴다 (WriteLine 아님)
-                            Console.SetCursorPosition(0, y);
+
+                            // [핵심 수정] 3. WriteLine() 대신 Write()로 덮어쓰기
                             Console.Write(line);
-                            
-                            // [수정] 현재 줄의 나머지 공간을 지운다 (이전 잔상 제거)
-                            Console.Write(new char[Math.Max(0, Console.WindowWidth - line.Length - 1)]);
+
+                            // [핵심 수정] 4. 현재 줄의 나머지 부분을 공백으로 지우기 (잔상 제거)
+                            int spacesToPad = Console.WindowWidth - line.Length;
+                            if (spacesToPad > 1) // 1칸 이상 여유 있을 때만
+                            {
+                                Console.Write(new string(' ', spacesToPad - 1));
+                            }
+
+                            // [핵심 수정] 5. 다음 줄로 수동 이동
+                            if (y < Console.WindowHeight - 1)
+                            {
+                                Console.SetCursorPosition(0, y + 1);
+                            }
+                            lineCount++;
                         }
 
-                        // [수정] 화면의 나머지 아랫부분을 지운다 (이전 잔상 제거)
-                        for (int y = lines.Length; y < Console.WindowHeight; y++)
+                        // [핵심 수정] 6. 화면의 나머지 아랫부분을 지우기 (잔상 제거)
+                        for (int y = lineCount; y < Console.WindowHeight; y++)
                         {
                             Console.SetCursorPosition(0, y);
-                            Console.Write(new char[Math.Max(0, Console.WindowWidth - 1)]);
+                            Console.Write(new string(' ', Console.WindowWidth - 1));
                         }
-                        
-                        // --- 3. 커서 위치 조정 (닉네임 입력창) ---
-                        if(isPrompt)
+
+                        // 7. 커서 설정
+                        if (isPrompt)
                         {
-                            // 서버가 보낸 메시지는 "...닉네임을 입력하세요:\n> " 형태
-                            // \n으로 쪼개면 마지막은 "", 마지막에서 두 번째가 "> "
-                            if (lines.Length >= 2)
-                            {
-                                string promptLine = lines[lines.Length - 2]; // "> " 또는 "> NICKNAME"
-                                int lineIndex = lines.Length - 2;
-                                Console.SetCursorPosition(promptLine.Length, lineIndex);
-                            }
+                            Console.CursorVisible = true;
+                            // 닉네임 입력 시 커서를 프롬프트 끝으로 이동
+                            Console.SetCursorPosition(lastMeaningfulLine.Length, lineCount - 1); 
+                        }
+                        else 
+                        {
+                            Console.CursorVisible = false;
                         }
                     }
                     else
@@ -157,7 +182,7 @@ class Program
     static void Main()
     {
         string serverAddress = "127.0.0.1"; 
-        int port = 12345;
+        int port = 12345; // [참고] 만약 '소켓' 오류가 나면 12346으로 변경
 
         MUDClient client = new MUDClient(serverAddress, port);
         client.Wait(); 
