@@ -77,6 +77,12 @@ public class Game
         };
 
         AddLog($"'{player.Class}'(이)가 ASCII 미궁에 입장했습니다.");
+        
+        // 화면 크기 확실히 초기화 및 초기 렌더링
+        UpdateScreenSize(true);
+        Render();
+        PrintBufferToConsole();
+        
         RunGameLoop(); 
     }
 

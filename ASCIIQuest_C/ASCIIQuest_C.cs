@@ -1,5 +1,5 @@
 ﻿//
-// ASCIIQuest_C/ASCIIQuest_C.cs (깜빡임 해결 최종 코드)
+// ASCIIQuest_C/ASCIIQuest_C.cs (깜빡임 현상 최종 수정 코드)
 //
 using System;
 using System.IO; 
@@ -53,69 +53,127 @@ class MUDClient
                     
                     if (singleLineData != null)
                     {
-                        string[] lines = singleLineData.Split('|');
+                        try
+                        {
+                            string[] lines = singleLineData.Split('|');
 
-                        // 1. 닉네임 프롬프트 확인 (커서 표시용)
-                        string lastMeaningfulLine = "";
-                        for(int i = lines.Length - 1; i >= 0; i--)
-                        {
-                            if (!string.IsNullOrEmpty(lines[i]))
+                            // 1. 닉네임 프롬프트 확인 (커서 표시용)
+                            string lastMeaningfulLine = "";
+                            for(int i = lines.Length - 1; i >= 0; i--)
                             {
-                                lastMeaningfulLine = lines[i];
-                                break;
+                                if (!string.IsNullOrEmpty(lines[i]))
+                                {
+                                    lastMeaningfulLine = lines[i];
+                                    break;
+                                }
                             }
-                        }
-                        bool isPrompt = lastMeaningfulLine.TrimEnd().EndsWith("> ");
-                        
-                        // [핵심 수정] 2. Console.Clear() 대신 커서를 (0,0)으로 이동
-                        Console.SetCursorPosition(0, 0); 
-                        
-                        int lineCount = 0;
-                        for (int y = 0; y < lines.Length; y++)
-                        {
-                            // 마지막 빈 줄은 무시
-                            if (y == lines.Length - 1 && string.IsNullOrEmpty(lines[y]))
+                            bool isPrompt = lastMeaningfulLine.TrimEnd().EndsWith("> ");
+                            
+                            // [핵심 수정] 2. Console.Clear() 대신 커서를 (0,0)으로 이동
+                            try
                             {
+                                Console.SetCursorPosition(0, 0);
+                            }
+                            catch (ArgumentOutOfRangeException)
+                            {
+                                // 화면 크기가 변경되었을 수 있음
                                 continue;
                             }
+                            
+                        // ANSI 이스케이프 제거용 정규식
+                        System.Text.RegularExpressions.Regex ansiRegex = new System.Text.RegularExpressions.Regex(@"\x1B\[[0-9;]*m");
 
-                            string line = lines[y].TrimEnd('\r');
-
-                            // [핵심 수정] 3. WriteLine() 대신 Write()로 덮어쓰기
-                            Console.Write(line);
-
-                            // [핵심 수정] 4. 현재 줄의 나머지 부분을 공백으로 지우기 (잔상 제거)
-                            int spacesToPad = Console.WindowWidth - line.Length;
-                            if (spacesToPad > 1) // 1칸 이상 여유 있을 때만
+                        int screenY = 0; // 실제 화면 Y 좌표
+                            int maxHeight = Math.Min(Console.WindowHeight, lines.Length);
+                            
+                            for (int i = 0; i < lines.Length && screenY < maxHeight; i++)
                             {
-                                Console.Write(new string(' ', spacesToPad - 1));
+                                // 마지막 빈 줄은 무시
+                                if (i == lines.Length - 1 && string.IsNullOrEmpty(lines[i]))
+                                {
+                                    continue;
+                                }
+
+                                string line = lines[i].TrimEnd('\r');
+                                
+                                if (string.IsNullOrEmpty(line) && i < lines.Length - 1)
+                                {
+                                    // 빈 줄도 표시 (단, 마지막 빈 줄은 제외)
+                                    try
+                                    {
+                                        Console.SetCursorPosition(0, screenY);
+                                        Console.Write(new string(' ', Console.WindowWidth));
+                                    }
+                                    catch (ArgumentOutOfRangeException)
+                                    {
+                                        break;
+                                    }
+                                    screenY++;
+                                    continue;
+                                }
+
+                                try
+                                {
+                                    // [핵심 수정] 3. 현재 화면 위치에 줄 표시
+                                    Console.SetCursorPosition(0, screenY);
+                                Console.Write(line.Replace("\r", "")); // [추가] 혹시 남은 CR 제거
+
+                                    // [핵심 수정] 4. 현재 줄의 나머지 부분을 공백으로 지우기 (잔상 제거)
+                                int visibleLen = ansiRegex.Replace(line, "").Length;
+                                int spacesToPad = Console.WindowWidth - visibleLen;
+                                    if (spacesToPad > 0)
+                                    {
+                                        Console.Write(new string(' ', spacesToPad));
+                                    }
+                                }
+                                catch (ArgumentOutOfRangeException)
+                                {
+                                    break;
+                                }
+
+                                screenY++;
                             }
 
-                            // [핵심 수정] 5. 다음 줄로 수동 이동
-                            if (y < Console.WindowHeight - 1)
+                            // [핵심 수정] 5. 화면의 나머지 아랫부분을 지우기 (잔상 제거)
+                            for (int y = screenY; y < Console.WindowHeight; y++)
                             {
-                                Console.SetCursorPosition(0, y + 1);
+                                try
+                                {
+                                    Console.SetCursorPosition(0, y);
+                                    Console.Write(new string(' ', Console.WindowWidth));
+                                }
+                                catch (ArgumentOutOfRangeException)
+                                {
+                                    break;
+                                }
                             }
-                            lineCount++;
-                        }
 
-                        // [핵심 수정] 6. 화면의 나머지 아랫부분을 지우기 (잔상 제거)
-                        for (int y = lineCount; y < Console.WindowHeight; y++)
-                        {
-                            Console.SetCursorPosition(0, y);
-                            Console.Write(new string(' ', Console.WindowWidth - 1));
+                            // 6. 커서 설정
+                            if (isPrompt)
+                            {
+                                Console.CursorVisible = true;
+                                // 닉네임 입력 시 커서를 프롬프트 끝으로 이동
+                                int lastLineY = screenY > 0 ? screenY - 1 : 0;
+                                try
+                                {
+                                    int promptVisibleLen = ansiRegex.Replace(lastMeaningfulLine, "").Length;
+                                    Console.SetCursorPosition(Math.Min(promptVisibleLen, Console.WindowWidth - 1), lastLineY);
+                                }
+                                catch (ArgumentOutOfRangeException)
+                                {
+                                    // 무시
+                                }
+                            }
+                            else 
+                            {
+                                Console.CursorVisible = false;
+                            }
                         }
-
-                        // 7. 커서 설정
-                        if (isPrompt)
+                        catch (Exception ex)
                         {
-                            Console.CursorVisible = true;
-                            // 닉네임 입력 시 커서를 프롬프트 끝으로 이동
-                            Console.SetCursorPosition(lastMeaningfulLine.Length, lineCount - 1); 
-                        }
-                        else 
-                        {
-                            Console.CursorVisible = false;
+                            // 디버깅용 (나중에 제거 가능)
+                            // Console.SetCursorPosition(0, 0);
+                            // Console.Write($"Error: {ex.Message}");
                         }
                     }
                     else
@@ -182,8 +240,11 @@ class Program
     static void Main()
     {
         string serverAddress = "127.0.0.1"; 
-        int port = 12345; // [참고] 만약 '소켓' 오류가 나면 12346으로 변경
-
+        
+        // [참고] 만약 '소켓' 오류가 나면 12346으로 변경
+        int port = 12345; 
+        
+        // [참고] '소켓' 오류가 나면 서버와 클라이언트 모두 12346으로 변경
         MUDClient client = new MUDClient(serverAddress, port);
         client.Wait(); 
     }
