@@ -30,6 +30,9 @@ class MUDClient
             Console.CursorVisible = false;
             Console.Clear();
 
+            // 콘솔 크기를 서버에 전송
+            SendConsoleSize();
+
             StartReceivingData(); 
             StartSendingInput();  
         }
@@ -40,7 +43,22 @@ class MUDClient
         }
     }
 
-    // [핵심 수정] 화면 렌더링 방식을 SetCursorPosition(0, 0)으로 변경
+    private void SendConsoleSize()
+    {
+        try
+        {
+            int width = Console.WindowWidth;
+            int height = Console.WindowHeight;
+            SendMessage($"CONSOLESIZE:{width}:{height}");
+        }
+        catch (Exception)
+        {
+            // 기본값 사용
+            SendMessage("CONSOLESIZE:120:30");
+        }
+    }
+
+    // [핵심 수정] ASCIIQuest_G의 PrintBufferToConsole 방식과 유사하게 렌더링
     private void StartReceivingData()
     {
         Thread thread = new Thread(() =>
@@ -69,78 +87,48 @@ class MUDClient
                             }
                             bool isPrompt = lastMeaningfulLine.TrimEnd().EndsWith("> ");
                             
-                            // [핵심 수정] 2. Console.Clear() 대신 커서를 (0,0)으로 이동
+                            // ANSI 이스케이프 제거용 정규식
+                            System.Text.RegularExpressions.Regex ansiRegex = new System.Text.RegularExpressions.Regex(@"\x1B\[[0-9;]*m");
+
+                            // [핵심 수정] ASCIIQuest_G의 PrintBufferToConsole 방식과 유사하게 렌더링
+                            // 먼저 화면 전체를 지우고, 각 줄을 출력
                             try
                             {
                                 Console.SetCursorPosition(0, 0);
                             }
                             catch (ArgumentOutOfRangeException)
                             {
-                                // 화면 크기가 변경되었을 수 있음
                                 continue;
                             }
                             
-                        // ANSI 이스케이프 제거용 정규식
-                        System.Text.RegularExpressions.Regex ansiRegex = new System.Text.RegularExpressions.Regex(@"\x1B\[[0-9;]*m");
-
-                        int screenY = 0; // 실제 화면 Y 좌표
                             int maxHeight = Math.Min(Console.WindowHeight, lines.Length);
                             
-                            for (int i = 0; i < lines.Length && screenY < maxHeight; i++)
-                            {
-                                // 마지막 빈 줄은 무시
-                                if (i == lines.Length - 1 && string.IsNullOrEmpty(lines[i]))
-                                {
-                                    continue;
-                                }
-
-                                string line = lines[i].TrimEnd('\r');
-                                
-                                if (string.IsNullOrEmpty(line) && i < lines.Length - 1)
-                                {
-                                    // 빈 줄도 표시 (단, 마지막 빈 줄은 제외)
-                                    try
-                                    {
-                                        Console.SetCursorPosition(0, screenY);
-                                        Console.Write(new string(' ', Console.WindowWidth));
-                                    }
-                                    catch (ArgumentOutOfRangeException)
-                                    {
-                                        break;
-                                    }
-                                    screenY++;
-                                    continue;
-                                }
-
-                                try
-                                {
-                                    // [핵심 수정] 3. 현재 화면 위치에 줄 표시
-                                    Console.SetCursorPosition(0, screenY);
-                                Console.Write(line.Replace("\r", "")); // [추가] 혹시 남은 CR 제거
-
-                                    // [핵심 수정] 4. 현재 줄의 나머지 부분을 공백으로 지우기 (잔상 제거)
-                                int visibleLen = ansiRegex.Replace(line, "").Length;
-                                int spacesToPad = Console.WindowWidth - visibleLen;
-                                    if (spacesToPad > 0)
-                                    {
-                                        Console.Write(new string(' ', spacesToPad));
-                                    }
-                                }
-                                catch (ArgumentOutOfRangeException)
-                                {
-                                    break;
-                                }
-
-                                screenY++;
-                            }
-
-                            // [핵심 수정] 5. 화면의 나머지 아랫부분을 지우기 (잔상 제거)
-                            for (int y = screenY; y < Console.WindowHeight; y++)
+                            for (int y = 0; y < Console.WindowHeight; y++)
                             {
                                 try
                                 {
                                     Console.SetCursorPosition(0, y);
-                                    Console.Write(new string(' ', Console.WindowWidth));
+                                    
+                                    if (y < lines.Length && y < maxHeight)
+                                    {
+                                        string line = lines[y].TrimEnd('\r');
+                                        
+                                        // 줄 출력
+                                        Console.Write(line.Replace("\r", ""));
+                                        
+                                        // 줄의 나머지 부분을 공백으로 채우기 (잔상 제거)
+                                        int visibleLen = ansiRegex.Replace(line, "").Length;
+                                        int spacesToPad = Console.WindowWidth - visibleLen;
+                                        if (spacesToPad > 0)
+                                        {
+                                            Console.Write(new string(' ', spacesToPad));
+                                        }
+                                    }
+                                    else
+                                    {
+                                        // 추가 줄이 없으면 공백으로 채우기
+                                        Console.Write(new string(' ', Console.WindowWidth));
+                                    }
                                 }
                                 catch (ArgumentOutOfRangeException)
                                 {
@@ -148,20 +136,23 @@ class MUDClient
                                 }
                             }
 
-                            // 6. 커서 설정
+                            // 커서 설정
                             if (isPrompt)
                             {
                                 Console.CursorVisible = true;
                                 // 닉네임 입력 시 커서를 프롬프트 끝으로 이동
-                                int lastLineY = screenY > 0 ? screenY - 1 : 0;
-                                try
+                                int lastLineY = Math.Min(maxHeight - 1, lines.Length - 1);
+                                if (lastLineY >= 0)
                                 {
-                                    int promptVisibleLen = ansiRegex.Replace(lastMeaningfulLine, "").Length;
-                                    Console.SetCursorPosition(Math.Min(promptVisibleLen, Console.WindowWidth - 1), lastLineY);
-                                }
-                                catch (ArgumentOutOfRangeException)
-                                {
-                                    // 무시
+                                    try
+                                    {
+                                        int promptVisibleLen = ansiRegex.Replace(lastMeaningfulLine, "").Length;
+                                        Console.SetCursorPosition(Math.Min(promptVisibleLen, Console.WindowWidth - 1), lastLineY);
+                                    }
+                                    catch (ArgumentOutOfRangeException)
+                                    {
+                                        // 무시
+                                    }
                                 }
                             }
                             else 
@@ -199,12 +190,49 @@ class MUDClient
     // 키 입력을 즉시 서버로 보내는 스레드
     private void StartSendingInput()
     {
+        Thread sizeCheckThread = new Thread(() =>
+        {
+            int lastWidth = Console.WindowWidth;
+            int lastHeight = Console.WindowHeight;
+            while (connected)
+            {
+                Thread.Sleep(500); // 0.5초마다 체크
+                try
+                {
+                    int currentWidth = Console.WindowWidth;
+                    int currentHeight = Console.WindowHeight;
+                    if (currentWidth != lastWidth || currentHeight != lastHeight)
+                    {
+                        lastWidth = currentWidth;
+                        lastHeight = currentHeight;
+                        SendConsoleSize();
+                    }
+                }
+                catch (Exception)
+                {
+                    // 무시
+                }
+            }
+        });
+        sizeCheckThread.IsBackground = true;
+        sizeCheckThread.Start();
+
         try
         {
             while (connected)
             {
                 ConsoleKeyInfo key = Console.ReadKey(true);
-                SendMessage(key.Key.ToString());
+                // [수정] 일반 문자 키(1, 2, 3 등)는 KeyChar로 보내고, 특수 키는 Key.ToString()으로 보냄
+                if (key.KeyChar != '\0' && !char.IsControl(key.KeyChar))
+                {
+                    // 일반 문자 키 (1, 2, 3, a, b, c 등)
+                    SendMessage(key.KeyChar.ToString().ToUpper());
+                }
+                else
+                {
+                    // 특수 키 (Enter, Backspace, Arrow keys 등)
+                    SendMessage(key.Key.ToString());
+                }
             }
         }
         catch (Exception)
@@ -239,7 +267,7 @@ class Program
 {
     static void Main()
     {
-        string serverAddress = "127.0.0.1"; 
+        string serverAddress = "127.0.0.1";
         
         // [참고] 만약 '소켓' 오류가 나면 12346으로 변경
         int port = 12345; 
