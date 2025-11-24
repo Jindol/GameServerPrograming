@@ -580,18 +580,18 @@ class MUDServer
         {
             trap.Trigger();
             if (trap.Type == TrapType.Damage)
-            {
-                player.HP -= 5;
-                AddLog($"{player.Username}(이)가 날카로운 함정을 밟았다! (HP -5)");
-                map[newX, newY] = ' ';
-                if (player.HP <= 0) HandlePlayerDeath(player);
-            }
+        {
+            player.HP -= 5;
+            AddLog($"{player.Username}(이)가 날카로운 함정을 밟았다! (HP -5)");
+            map[newX, newY] = ' ';
+            if (player.HP <= 0) HandlePlayerDeath(player);
+        }
             else if (trap.Type == TrapType.Battle)
-            {
-                AddLog("함정이다! 숨어있던 몬스터가 공격한다!");
-                map[newX, newY] = ' ';
-                StartBattle(new Monster("함정 거미", 0, 0, 25, 4, 0, 'S', 20));
-                return true;
+        {
+            AddLog("함정이다! 숨어있던 몬스터가 공격한다!");
+            map[newX, newY] = ' ';
+            StartBattle(new Monster("함정 거미", 0, 0, 25, 4, 0, 'S', 20));
+            return true;
             }
         }
 
@@ -648,8 +648,8 @@ class MUDServer
                 // 아이템 사용 메뉴
                 if (player.ConsumableInventory.Count == 0)
                 {
-                    AddLog("아이템 가방이 비어있습니다!");
-                    BroadcastBattleState();
+                AddLog("아이템 가방이 비어있습니다!");
+                BroadcastBattleState();
                 }
                 else
                 {
@@ -749,13 +749,25 @@ class MUDServer
         traps.Clear();
         chests.Clear();
         
-        // 전체를 벽으로 채움
+        // 전체를 '.'으로 채움 (이동 가능한 바닥)
         for (int y = 0; y < MapHeight; y++)
         {
             for (int x = 0; x < MapWidth; x++)
             {
-                map[x, y] = '█';
+                map[x, y] = '.';
             }
+        }
+        
+        // 맵 경계를 벽으로 만들기 (가장자리)
+        for (int x = 0; x < MapWidth; x++)
+        {
+            map[x, 0] = '█'; // 상단 경계
+            map[x, MapHeight - 1] = '█'; // 하단 경계
+        }
+        for (int y = 0; y < MapHeight; y++)
+        {
+            map[0, y] = '█'; // 좌측 경계
+            map[MapWidth - 1, y] = '█'; // 우측 경계
         }
 
         // 스테이지별 맵 생성 파라미터
@@ -788,142 +800,119 @@ class MUDServer
             maxRoomSize = minRoomSize + 1;
         }
 
-        // 보스 방 생성
-        int bossRoomW = Math.Min(25, MapWidth / 4);
-        int bossRoomH = Math.Min(15, MapHeight / 2);
-        int bossRoomX = MapWidth - bossRoomW - 2;
-        int bossRoomY = (MapHeight - bossRoomH) / 2;
-        bossRoom = new Rectangle(bossRoomX, bossRoomY, bossRoomW, bossRoomH);
-        CreateRoom(bossRoom, false);
-        rooms.Add(bossRoom);
+        // 방 생성 로직 제거 - 맵을 하나의 큰 공간으로 사용
+        // 보스 방은 더미로 설정 (실제로는 사용하지 않음)
+        bossRoom = new Rectangle(0, 0, MapWidth, MapHeight);
 
-        // 일반 방 생성
-        for (int i = 0; i < maxRooms - 1; i++)
-        {
-            Rectangle newRoom;
-            Rectangle attachedRoom = new Rectangle(0, 0, 0, 0);
-            bool isLShaped = false;
-            bool overlap;
-            int attempts = 0;
-
-            do
-            {
-                attempts++;
-                overlap = false;
-                isLShaped = false;
-
-                if (random.NextDouble() < lRoomChance)
-                {
-                    isLShaped = true;
-                    int maxW1 = Math.Max(minRoomSize + 1, maxRoomSize);
-                    int maxH1 = Math.Max(minRoomSize + 1, maxRoomSize);
-                    int w1 = random.Next(minRoomSize, maxW1);
-                    int h1 = random.Next(minRoomSize, maxH1);
-                    int maxX1 = Math.Max(2, MapWidth - w1 - 1);
-                    int maxY1 = Math.Max(2, MapHeight - h1 - 1);
-                    if (maxX1 <= 1) maxX1 = 2;
-                    if (maxY1 <= 1) maxY1 = 2;
-                    int x1 = random.Next(1, maxX1);
-                    int y1 = random.Next(1, maxY1);
-                    newRoom = new Rectangle(x1, y1, w1, h1);
-
-                    int w2, h2, x2, y2;
-                    if (random.Next(0, 2) == 0) // 가로 팔
-                    {
-                        int minW2 = Math.Max(1, minRoomSize / 2);
-                        int maxW2 = Math.Max(minW2 + 1, maxRoomSize);
-                        w2 = random.Next(minW2, maxW2);
-                        h2 = h1;
-                        x2 = (random.Next(0, 2) == 0) ? (x1 - w2) : (x1 + w1);
-                        y2 = y1;
-                    }
-                    else // 세로 팔
-                    {
-                        w2 = w1;
-                        int minH2 = Math.Max(1, minRoomSize / 2);
-                        int maxH2 = Math.Max(minH2 + 1, maxRoomSize);
-                        h2 = random.Next(minH2, maxH2);
-                        x2 = x1;
-                        y2 = (random.Next(0, 2) == 0) ? (y1 - h2) : (y1 + h1);
-                    }
-                    attachedRoom = new Rectangle(x2, y2, w2, h2);
-
-                    if (attachedRoom.Left < 1 || attachedRoom.Right >= MapWidth - 1 ||
-                        attachedRoom.Top < 1 || attachedRoom.Bottom >= MapHeight - 1)
-                    {
-                        overlap = true;
-                        continue;
-                    }
-                    if (rooms.Any(r => r.Intersects(newRoom) || r.Intersects(attachedRoom)))
-                    {
-                        overlap = true;
-                        continue;
-                    }
-                }
-                else
-                {
-                    int maxW = Math.Max(minRoomSize + 1, maxRoomSize + 1);
-                    int w = random.Next(minRoomSize, maxW);
-                    int h_variation = (int)(w * 0.5);
-                    int minH = Math.Max(minRoomSize, w - h_variation);
-                    int maxH = Math.Min(maxRoomSize, w + h_variation);
-                    int maxH2 = Math.Max(minH + 1, maxH + 1);
-                    int h = random.Next(minH, maxH2);
-
-                    int maxX = Math.Max(2, MapWidth - w - 1);
-                    int maxY = Math.Max(2, MapHeight - h - 1);
-                    if (maxX <= 1) maxX = 2;
-                    if (maxY <= 1) maxY = 2;
-                    int x = random.Next(1, maxX);
-                    int y = random.Next(1, maxY);
-                    newRoom = new Rectangle(x, y, w, h);
-
-                    if (rooms.Any(r => r.Intersects(newRoom)))
-                    {
-                        overlap = true;
-                        continue;
-                    }
-                }
-            } while (overlap && attempts < 100);
-
-            if (!overlap)
-            {
-                CreateRoom(newRoom, true);
-                rooms.Add(newRoom);
-
-                if (isLShaped)
-                {
-                    CreateRoom(attachedRoom, true);
-                    CreateHorizontalTunnel(newRoom.Center.x, attachedRoom.Center.x, newRoom.Center.y);
-                    CreateVerticalTunnel(newRoom.Center.y, attachedRoom.Center.y, attachedRoom.Center.x);
-                }
-            }
-        }
-
-        // 맵 구조 정리
-        var boss = rooms[0];
-        rooms = rooms.Skip(1).OrderBy(r => r.Center.x).ToList();
-        rooms.Insert(0, boss);
-        rooms.Add(boss);
-
-        // 터널 생성
-        for (int i = 1; i < rooms.Count; i++)
-        {
-            var (prevX, prevY) = rooms[i - 1].Center;
-            var (currX, currY) = rooms[i].Center;
-            CreateHorizontalTunnel(prevX, currX, prevY);
-            CreateVerticalTunnel(prevY, currY, currX);
-        }
-
-        // 보스 스폰
-        (int bossX, int bossY) = bossRoom.Center;
+        // 보스 스폰 (경계에서 멀리 떨어진 위치)
+        int bossX = MapWidth / 2;
+        int bossY = MapHeight / 2;
         monsters.Add(new Monster("데이터 골렘", bossX, bossY, 500, 20, 15, 'B', 1500));
 
-        // 함정, 몬스터, 상자 스폰
+        // 함정, 몬스터, 상자 스폰 (기본 스폰)
         SpawnTraps(TrapType.Damage, '^', damageTraps);
         SpawnTraps(TrapType.Battle, '*', battleTraps);
         SpawnMonsters(monsterCount);
         SpawnChests(chestCount);
+        
+        // 맵의 빈 공간('.'인 곳)을 함정/보상/몬스터로 채우기
+        FillEmptySpacesWithContent();
+        
+        // 경계 벽 위치에 있는 모든 몬스터/함정/상자 제거
+        monsters.RemoveAll(m => m.X == 0 || m.X == MapWidth - 1 || m.Y == 0 || m.Y == MapHeight - 1);
+        traps.RemoveAll(t => t.X == 0 || t.X == MapWidth - 1 || t.Y == 0 || t.Y == MapHeight - 1);
+        chests.RemoveAll(c => c.X == 0 || c.X == MapWidth - 1 || c.Y == 0 || c.Y == MapHeight - 1);
+        
+        // 경계 벽 위치의 맵 타일을 벽으로 설정 (최종)
+        for (int x = 0; x < MapWidth; x++)
+        {
+            map[x, 0] = '█'; // 상단 경계
+            map[x, MapHeight - 1] = '█'; // 하단 경계
+        }
+        for (int y = 0; y < MapHeight; y++)
+        {
+            map[0, y] = '█'; // 좌측 경계
+            map[MapWidth - 1, y] = '█'; // 우측 경계
+        }
+    }
+    
+    private void FillEmptySpacesWithContent()
+    {
+        // '.'인 모든 위치를 찾기
+        List<(int x, int y)> emptySpaces = new List<(int x, int y)>();
+        for (int y = 1; y < MapHeight - 1; y++)
+        {
+            for (int x = 1; x < MapWidth - 1; x++)
+            {
+                // 벽 위치는 제외
+                if (map[x, y] == '█')
+                {
+                    continue;
+                }
+                
+                // '.' 위치만 확인
+                if (map[x, y] == '.')
+                {
+                    // 이미 다른 오브젝트가 있는지 확인
+                    bool hasObject = monsters.Any(m => m.X == x && m.Y == y) ||
+                                   chests.Any(c => c.X == x && c.Y == y) ||
+                                   traps.Any(t => t.X == x && t.Y == y) ||
+                                   gamePlayers.Values.Any(p => p.X == x && p.Y == y) ||
+                                   (x == MapWidth / 2 && y == MapHeight / 2); // 보스 위치 제외
+                    
+                    if (!hasObject)
+                    {
+                        emptySpaces.Add((x, y));
+                    }
+                }
+            }
+        }
+        
+        // 빈 공간을 랜덤하게 섞기
+        emptySpaces = emptySpaces.OrderBy(_ => random.Next()).ToList();
+        
+        // 빈 공간의 25%를 함정/보상/몬스터로 채우기 (적당한 수준)
+        int fillCount = (int)(emptySpaces.Count * 0.25);
+        // 함정 30%, 상자 20%, 몬스터 50% 비율
+        int trapCount = (int)(fillCount * 0.3);
+        int chestCount = (int)(fillCount * 0.2);
+        int monsterCount = fillCount - trapCount - chestCount;
+        
+        int index = 0;
+        
+        // 함정 추가
+        for (int i = 0; i < trapCount && index < emptySpaces.Count; i++)
+        {
+            var (x, y) = emptySpaces[index++];
+            TrapType trapType = (random.Next(0, 2) == 0) ? TrapType.Damage : TrapType.Battle;
+            char icon = (trapType == TrapType.Damage) ? '^' : '*';
+            traps.Add(new Trap(x, y, trapType, icon));
+            map[x, y] = icon;
+        }
+        
+        // 상자 추가
+        for (int i = 0; i < chestCount && index < emptySpaces.Count; i++)
+        {
+            var (x, y) = emptySpaces[index++];
+            chests.Add(new Chest(x, y));
+            map[x, y] = 'C';
+        }
+        
+        // 몬스터 추가
+        for (int i = 0; i < monsterCount && index < emptySpaces.Count; i++)
+        {
+            var (x, y) = emptySpaces[index++];
+            string[] monsterNames = { "데이터 덩어리", "고블린", "슬라임" };
+            char[] monsterIcons = { 'M', 'G', 'S' };
+            int[] monsterHPs = { 50, 30, 20 };
+            int[] monsterATKs = { 5, 3, 2 };
+            int[] monsterDEFs = { 2, 1, 0 };
+            int[] monsterEXPs = { 50, 30, 20 };
+            
+            int idx = random.Next(monsterNames.Length);
+            monsters.Add(new Monster(monsterNames[idx], x, y, monsterHPs[idx], monsterATKs[idx], monsterDEFs[idx], monsterIcons[idx], monsterEXPs[idx]));
+            map[x, y] = monsterIcons[idx];
+        }
     }
     
     private void CreateRoom(Rectangle room, bool addObstacles)
@@ -938,70 +927,7 @@ class MUDServer
             }
         }
 
-        if (addObstacles && room.Width >= 7 && room.Height >= 7)
-        {
-            int obstacleCount = (room.Width * room.Height) / 50;
-            for (int i = 0; i < obstacleCount; i++)
-            {
-                if (random.Next(0, 2) == 0) // 기둥
-                {
-                    int minPillarX = room.Left + 2;
-                    int maxPillarX = Math.Max(minPillarX + 1, room.Right - 2);
-                    int minPillarY = room.Top + 2;
-                    int maxPillarY = Math.Max(minPillarY + 1, room.Bottom - 2);
-                    
-                    if (maxPillarX > minPillarX && maxPillarY > minPillarY)
-                    {
-                        int pillarX = random.Next(minPillarX, maxPillarX);
-                        int pillarY = random.Next(minPillarY, maxPillarY);
-                        if (pillarX > 0 && pillarX < MapWidth && pillarY > 0 && pillarY < MapHeight)
-                        {
-                            map[pillarX, pillarY] = '█';
-                            if (pillarX + 1 < MapWidth) map[pillarX + 1, pillarY] = '█';
-                            if (pillarY + 1 < MapHeight) map[pillarX, pillarY + 1] = '█';
-                        }
-                    }
-                }
-                else // 벽
-                {
-                    int maxLineLength = Math.Max(4, room.Width / 3);
-                    int lineLength = random.Next(3, Math.Max(4, maxLineLength));
-                    int lineX, lineY;
-                    if (random.Next(0, 2) == 0) // 가로 벽
-                    {
-                        int minLineX = room.Left + 2;
-                        int maxLineX = Math.Max(minLineX + 1, room.Right - lineLength - 1);
-                        int minLineY = room.Top + 2;
-                        int maxLineY = Math.Max(minLineY + 1, room.Bottom - 2);
-                        
-                        if (maxLineX > minLineX && maxLineY > minLineY)
-                        {
-                            lineX = random.Next(minLineX, maxLineX);
-                            lineY = random.Next(minLineY, maxLineY);
-                            for (int x = 0; x < lineLength; x++)
-                                if (lineX + x < MapWidth && lineX + x > 0 && lineY > 0 && lineY < MapHeight)
-                                    map[lineX + x, lineY] = '█';
-                        }
-                    }
-                    else // 세로 벽
-                    {
-                        int minLineX = room.Left + 2;
-                        int maxLineX = Math.Max(minLineX + 1, room.Right - 2);
-                        int minLineY = room.Top + 2;
-                        int maxLineY = Math.Max(minLineY + 1, room.Bottom - lineLength - 1);
-                        
-                        if (maxLineX > minLineX && maxLineY > minLineY)
-                        {
-                            lineX = random.Next(minLineX, maxLineX);
-                            lineY = random.Next(minLineY, maxLineY);
-                            for (int y = 0; y < lineLength; y++)
-                                if (lineY + y < MapHeight && lineY + y > 0 && lineX > 0 && lineX < MapWidth)
-                                    map[lineX, lineY + y] = '█';
-                        }
-                    }
-                }
-            }
-        }
+        // 중간 벽 생성 제거 (경계 벽만 유지)
     }
     
     private void CreateHorizontalTunnel(int x1, int x2, int y)
@@ -1036,9 +962,22 @@ class MUDServer
             y = random.Next(1, MapHeight - 1);
             attempts++;
             if (attempts > 500) return (1, 1);
+            
+            // 경계 벽 위치는 제외
+            if (x == 0 || x == MapWidth - 1 || y == 0 || y == MapHeight - 1)
+            {
+                continue;
+            }
+            
+            // 벽이면 제외
+            if (map[x, y] == '█')
+            {
+                continue;
+            }
+            
             if (!allowInBossRoom && bossRoom.Contains(x, y)) { continue; }
         }
-        while (map[x, y] != '.' ||
+        while (map[x, y] != '.' || // '.'이 아니면 제외
                gamePlayers.Values.Any(p => p.X == x && p.Y == y) ||
                monsters.Any(m => m.X == x && m.Y == y) ||
                traps.Any(t => t.X == x && t.Y == y) ||
@@ -1174,7 +1113,6 @@ class MUDServer
         {
             foreach (var player in gamePlayers.Values.Where(p => p.HP > 0))
             {
-                player.AddItem(item);
                 AddLog($"{player.Username}(이)가 {item.Name}을(를) 획득했습니다!");
             }
         }
@@ -1193,16 +1131,6 @@ class MUDServer
                     AddLog($"LEVEL UP! {player.Username}({player.Class})(이)가 {player.Level}레벨이 되었습니다!");
                 }
             }
-            else
-            {
-                player.HP = player.MaxHP / 4;
-                AddLog($"{player.Username}(이)가 전투 승리로 부활합니다!");
-            }
-        }
-
-        if (currentPlayerTurn == null || currentPlayerTurn.HP <= 0)
-        {
-            currentPlayerTurn = gamePlayers.Values.FirstOrDefault(p => p.HP > 0);
         }
 
         BroadcastWorldState();
@@ -1220,12 +1148,6 @@ class MUDServer
         }
         currentBattleMonster = null;
         currentState = GameState.World;
-
-        if (currentPlayerTurn == null || currentPlayerTurn.HP <= 0)
-        {
-            currentPlayerTurn = gamePlayers.Values.FirstOrDefault(p => p.HP > 0);
-        }
-
         BroadcastWorldState();
     }
 
@@ -1234,52 +1156,33 @@ class MUDServer
         if (currentBattleMonster == null) return;
 
         var alivePlayers = gamePlayers.Values.Where(p => p.HP > 0).ToList();
-        if (alivePlayers.Count == 0) return;
-
-        Player targetPlayer = alivePlayers[random.Next(alivePlayers.Count)];
-
-        var monster = currentBattleMonster;
-        AddLog($"{monster.Name}의 턴!");
-        int damage = Math.Max(0, monster.ATK - targetPlayer.DEF);
-        targetPlayer.HP -= damage;
-        AddLog($"{monster.Name}이(가) {targetPlayer.Username}에게 {damage}의 데미지!");
-
-        if (targetPlayer.HP <= 0)
-        {
-            HandlePlayerDeath(targetPlayer);
-        }
-    }
-
-    private void HandlePlayerDeath(Player deadPlayer)
-    {
-        AddLog($"{deadPlayer.Username}({deadPlayer.Class})(이)가 쓰러졌다...");
-
-        if (gamePlayers.Values.All(p => p.HP <= 0))
+        if (alivePlayers.Count == 0)
         {
             AddLog("파티가 전멸했습니다... 게임을 리셋합니다.");
             BroadcastMessage("--- GAME OVER --- \n 3초 후 재시작합니다...", true);
             currentState = GameState.GameOver;
 
             Timer resetTimer = null;
-            resetTimer = new Timer((_) => {
-                // [수정] 타이머 콜백(다른 스레드)에서 ResetGame을 호출하므로 lock
+            resetTimer = new Timer((_) => 
+            {
                 lock (gameLock)
                 {
                     ResetGame();
                 }
                 resetTimer?.Dispose();
             }, null, 3000, Timeout.Infinite);
+            return;
         }
-        else
+
+        var targetPlayer = currentPlayerTurn ?? alivePlayers.First();
+        AddLog($"{currentBattleMonster.Name}의 턴!");
+        int damage = Math.Max(0, currentBattleMonster.ATK - targetPlayer.DEF);
+        targetPlayer.HP -= damage;
+        AddLog($"{currentBattleMonster.Name}이(가) {targetPlayer.Username}에게 {damage}의 데미지!");
+
+        if (targetPlayer.HP <= 0)
         {
-            if (currentState != GameState.Battle)
-            {
-                AddLog($"{deadPlayer.Username}(이)가 부활을 기다립니다. (전투 승리 시 부활)");
-            }
-            else
-            {
-                AddLog($"{deadPlayer.Username}(이)가 전투에서 쓰러졌습니다!");
-            }
+            AddLog($"{targetPlayer.Username}(이)가 전투에서 쓰러졌습니다!");
         }
     }
 
@@ -1310,8 +1213,7 @@ class MUDServer
             monster.Y = newY;
         }
     }
-    
-    // [신규] 상자 열기 시도
+
     private void TryOpenChest(Player player)
     {
         Chest? chest = chests.Find(c => c.X == player.X && c.Y == player.Y && !c.IsOpen);
@@ -1320,24 +1222,16 @@ class MUDServer
             AddLog("열 수 있는 상자가 없습니다.");
             return;
         }
-        
+
         chest.Open();
-        AddLog($"{player.Username}(이)가 상자를 엽니다...");
-        
-        // 아이템 드롭
-        if (random.NextDouble() < 0.15) // 함정 확률
-        {
-            AddLog("함정이다! 상자에서 몬스터가 튀어나왔다!");
-            StartBattle(new Monster("함정 거미", 0, 0, 25, 4, 0, 'S', 20));
-            return;
-        }
-        
+        map[chest.X, chest.Y] = '.';
+
         if (random.NextDouble() < 0.10) // 빈 상자
         {
             AddLog("상자가 비어있습니다.");
             return;
         }
-        
+
         // 아이템 획득
         List<Item> drops = ItemDB.GenerateAllDrops(player.Class, random, currentStage);
         foreach (var item in drops)
@@ -1345,29 +1239,84 @@ class MUDServer
             player.AddItem(item);
             AddLog($"{player.Username}(이)가 {item.Name}을(를) 획득했습니다!");
         }
-        
-        map[chest.X, chest.Y] = '.';
+    }
+
+    private void HandlePlayerDeath(Player player)
+    {
+        AddLog($"{player.Username}(이)가 쓰러졌습니다!");
+        player.HP = 0;
+
+        if (gamePlayers.Values.All(p => p.HP <= 0))
+        {
+            AddLog("파티가 전멸했습니다... 게임을 리셋합니다.");
+            BroadcastMessage("--- GAME OVER --- \n 3초 후 재시작합니다...", true);
+            currentState = GameState.GameOver;
+
+            Timer resetTimer = null;
+            resetTimer = new Timer((_) => 
+            {
+                lock (gameLock)
+                {
+                    ResetGame();
+                }
+                resetTimer?.Dispose();
+            }, null, 3000, Timeout.Infinite);
+        }
+        else
+        {
+            if (currentState != GameState.Battle)
+            {
+                AddLog($"{player.Username}(이)가 부활을 기다립니다. (전투 승리 시 부활)");
+            }
+            else
+            {
+                AddLog($"{player.Username}(이)가 전투에서 쓰러졌습니다!");
+            }
+        }
+    }
+
+    private void AttackMonster(Player player, Monster monster)
+    {
+        if (monster == null) return;
+
+        int damage = Math.Max(0, player.ATK - monster.DEF);
+        monster.HP -= damage;
+        AddLog($"{player.Username}(이)가 {monster.Name}에게 {damage}의 데미지를 입혔습니다!");
+
+        if (monster.HP <= 0)
+        {
+            AddLog($"{monster.Name}을(를) 처치했습니다!");
+        }
     }
 
     private bool UseSkill(Player player, int skillIndex)
     {
-        if (currentBattleMonster == null) return false;
-        if (skillIndex >= player.Skills.Count)
+        if (player.Skills == null || skillIndex < 0 || skillIndex >= player.Skills.Count)
         {
-            AddLog("해당 슬롯에 스킬이 없습니다.");
+            AddLog("사용할 수 있는 스킬이 없습니다.");
             return false;
         }
 
-        SkillData skill = player.Skills[skillIndex];
-        int mpCost = skill.MpCost;
-
-        if (player.MP < mpCost)
+        var skill = player.Skills[skillIndex];
+        if (skill == null)
         {
-            AddLog("MP가 부족합니다!");
+            AddLog("사용할 수 있는 스킬이 없습니다.");
             return false;
         }
 
-        player.MP -= mpCost;
+        if (player.MP < skill.MpCost)
+        {
+            AddLog("MP가 부족합니다.");
+            return false;
+        }
+
+        if (currentBattleMonster == null)
+        {
+            AddLog("전투 중이 아닙니다.");
+            return false;
+        }
+
+        player.MP -= skill.MpCost;
         int damage = 0;
         string logPrefix = $"{player.Username}:";
 
@@ -1377,75 +1326,25 @@ class MUDServer
                 damage = (player.ATK + player.STR) * 2 - currentBattleMonster.DEF;
                 AddLog($"{logPrefix} 파워 스트라이크! {damage}의 데미지!");
                 break;
-            case "방패 치기":
-                damage = player.DEF * 2 - currentBattleMonster.DEF;
-                AddLog($"{logPrefix} 방패 치기! {damage}의 데미지!");
-                break;
-            case "사기 진작":
-                player.ATK += 2; // (임시 버프)
-                AddLog($"{logPrefix} 사기 진작! 공격력이 2 증가!");
-                return true;
-            case "파이어볼":
-                damage = player.INT * 3 - currentBattleMonster.DEF;
-                AddLog($"{logPrefix} 파이어볼! {damage}의 데미지!");
-                break;
-            case "힐":
-                int heal = player.INT * 2;
-                player.HP = Math.Min(player.MaxHP, player.HP + heal);
-                AddLog($"{logPrefix} 힐! HP를 {heal}만큼 회복!");
-                return true;
             case "매직 미사일":
-                damage = player.INT + 5 - currentBattleMonster.DEF;
+                damage = (player.ATK + player.INT) * 2 - currentBattleMonster.DEF;
                 AddLog($"{logPrefix} 매직 미사일! {damage}의 데미지!");
                 break;
             case "백스탭":
                 damage = (player.ATK + player.DEX) * 2 - currentBattleMonster.DEF;
                 AddLog($"{logPrefix} 백스탭! {damage}의 데미지!");
                 break;
-            case "독 찌르기":
-                damage = player.DEX;
-                AddLog($"{logPrefix} 독 찌르기! {damage}의 데미지!");
-                break;
-            case "퀵 어택":
-                damage = player.ATK + player.DEX - currentBattleMonster.DEF;
-                AddLog($"{logPrefix} 퀵 어택! {damage}의 데미지!");
+            default:
+                damage = player.ATK - currentBattleMonster.DEF;
+                AddLog($"{logPrefix} {skill.Name}! {damage}의 데미지!");
                 break;
         }
 
         if (damage < 0) damage = 0;
         currentBattleMonster.HP -= damage;
+        AddLog($"{player.Username}(이)가 {currentBattleMonster.Name}에게 {damage}의 데미지를 입혔습니다!");
+
         return true;
-    }
-
-    private void AttackMonster(Player attacker, Monster target)
-    {
-        int damage = 0;
-        switch (attacker.Class)
-        {
-            case PlayerClass.Warrior:
-                damage = (attacker.ATK + attacker.STR + attacker.WeaponAttack) - target.DEF;
-                break;
-            case PlayerClass.Wizard:
-                float intMultiplier = 1.0f + (attacker.INT / 100.0f);
-                int magicDamage = (int)(attacker.WeaponAttack + (attacker.ATK * intMultiplier));
-                damage = magicDamage - target.DEF;
-                break;
-            case PlayerClass.Rogue:
-                float dexMultiplier = 1.0f + (attacker.DEX / 100.0f);
-                int initialDamage = (int)(attacker.WeaponAttack + (attacker.ATK * dexMultiplier)) - target.DEF;
-                damage = initialDamage;
-                float totalCritChance = attacker.CritChance + (attacker.DEX / 1000.0f);
-                if (random.NextDouble() < totalCritChance)
-                {
-                    damage = (int)(initialDamage * 1.5);
-                    AddLog($"{attacker.Username}: 핵심 데이터(크리티컬)!");
-                }
-                break;
-        }
-
-        if (damage < 0) damage = 0;
-        target.HP -= damage;
-        AddLog($"{attacker.Username}({attacker.Class})(이)가 {target.Name}에게 {damage}의 데미지를 입혔습니다!");
     }
 
 
@@ -1465,25 +1364,29 @@ class MUDServer
         int screenWidth = client.WindowWidth;
         int screenHeight = client.WindowHeight;
         
-        // 로그와 정보 박스는 고정 크기
+        // 로그 박스는 고정 높이
         int worldLogHeight = 10; // 고정 높이
         int worldInfoWidth = 35; // 고정 너비
-        int worldLogWidth = screenWidth - worldInfoWidth; // 나머지 공간 (공백 없이 바로 붙임)
         
-        // 맵은 로그/정보 영역을 제외한 나머지 전체 공간 사용
+        // 맵 박스는 정보 박스를 제외한 나머지 너비 사용
+        int worldMapWidth = screenWidth - worldInfoWidth;
+        
+        // 맵과 정보 박스는 같은 높이 (로그 높이 제외)
         int worldMapHeight = screenHeight - worldLogHeight;
+        
+        // 로그 박스는 전체 너비 사용
+        int worldLogWidth = screenWidth;
         
         // 최소 크기 보장
         worldMapHeight = Math.Max(10, worldMapHeight);
         worldLogHeight = Math.Max(5, worldLogHeight);
         worldInfoWidth = Math.Max(30, worldInfoWidth);
-        worldLogWidth = Math.Max(30, worldLogWidth);
+        worldMapWidth = Math.Max(30, worldMapWidth);
         
-        // worldInfoX는 실제로 사용되지 않지만 호환성을 위해 유지
-        int worldInfoX = worldLogWidth;
+        // worldInfoX는 맵 박스 너비 (정보 박스 시작 위치)
+        int worldInfoX = worldMapWidth;
 
-        var topLines = BuildWorldTopLayout(player, screenWidth, worldMapHeight, worldLogWidth, worldLogHeight, worldInfoX, worldInfoWidth, out int totalWidth);
-        // BuildWorldTopLayout에서 이미 로그와 정보를 함께 배치했으므로 추가 호출 불필요
+        var topLines = BuildWorldTopLayout(player, screenWidth, worldMapWidth, worldMapHeight, worldLogWidth, worldLogHeight, worldInfoX, worldInfoWidth, out int totalWidth);
         return string.Join("\n", topLines);
     }
 
@@ -1497,7 +1400,7 @@ class MUDServer
         int battleStageHeight = 12;
         int statusHeight = 20;
         int logHeight = 10;
-        
+
         var battleStageLines = BuildBattleStageBox(totalWidth);
         var statusLines = BuildBattleStatusBox(player, totalWidth);
         var logBoxLines = BuildLogBox(totalWidth, logHeight, "(행동: 1,2,3,4 | 스킬: Q,W,E | 뒤로가기: B)");
@@ -1505,10 +1408,10 @@ class MUDServer
         return string.Join("\n", battleStageLines.Concat(statusLines).Concat(logBoxLines));
     }
 
-    private List<string> BuildWorldTopLayout(Player viewer, int screenWidth, int worldMapHeight, int worldLogWidth, int worldLogHeight, int worldInfoX, int worldInfoWidth, out int totalWidth)
+    private List<string> BuildWorldTopLayout(Player viewer, int screenWidth, int worldMapWidth, int worldMapHeight, int worldLogWidth, int worldLogHeight, int worldInfoX, int worldInfoWidth, out int totalWidth)
     {
-        // 맵 박스 크기 계산 (전체 화면 너비 사용)
-        int mapBoxWidth = screenWidth;
+        // 맵 박스 크기 계산 (정보 박스를 제외한 너비)
+        int mapBoxWidth = worldMapWidth;
         int mapBoxHeight = worldMapHeight;
 
         // 카메라 뷰포트 계산 (플레이어 중심)
@@ -1524,29 +1427,68 @@ class MUDServer
         var mapContent = BuildMapContentWithCamera(cameraX, cameraY, viewportWidth, viewportHeight);
         var mapBoxLines = BuildBox(mapBoxWidth, mapBoxHeight, "ASCII 미궁", mapContent);
         
-        // 정보 박스는 맵 박스 아래에 배치 (ASCIIQuest_G 방식)
-        // 박스 크기 고정을 위해 maxHeight 지정
-        var infoBoxLines = BuildBox(worldInfoWidth, worldLogHeight, "플레이어 정보", BuildInfoContentFor(viewer, worldInfoWidth, worldLogHeight - 2));
+        // 정보 박스는 맵 박스와 같은 높이로 나란히 배치
+        var infoBoxLines = BuildBox(worldInfoWidth, worldMapHeight, "플레이어 정보", BuildInfoContentFor(viewer, worldInfoWidth, worldMapHeight - 2));
 
         totalWidth = screenWidth;
         var combined = new List<string>(worldMapHeight + worldLogHeight);
         
-        // 맵 박스 추가
-        for (int i = 0; i < mapBoxHeight; i++)
+        // 맵 박스와 정보 박스를 같은 줄에 나란히 배치
+        for (int i = 0; i < worldMapHeight; i++)
         {
-            combined.Add(mapBoxLines[i]);
+            string mapLine = (i < mapBoxLines.Count) ? mapBoxLines[i] : new string(' ', mapBoxWidth);
+            string infoLine = (i < infoBoxLines.Count) ? infoBoxLines[i] : new string(' ', worldInfoWidth);
+            
+            // 각 박스의 실제 문자열 길이 확인 (ANSI 코드 포함)
+            int mapLineActualLen = mapLine.Length;
+            int infoLineActualLen = infoLine.Length;
+            
+            // BuildBox가 반환한 라인은 이미 정확한 길이여야 하지만, 안전을 위해 조정
+            if (mapLineActualLen < mapBoxWidth)
+            {
+                mapLine += new string(' ', mapBoxWidth - mapLineActualLen);
+            }
+            else if (mapLineActualLen > mapBoxWidth)
+            {
+                // ANSI 코드를 고려하여 잘라내기
+                mapLine = PadOrTrimVisible(mapLine, mapBoxWidth);
+            }
+            
+            if (infoLineActualLen < worldInfoWidth)
+            {
+                infoLine += new string(' ', worldInfoWidth - infoLineActualLen);
+            }
+            else if (infoLineActualLen > worldInfoWidth)
+            {
+                // ANSI 코드를 고려하여 잘라내기
+                infoLine = PadOrTrimVisible(infoLine, worldInfoWidth);
+            }
+            
+            // 맵 박스와 정보 박스를 공백 없이 바로 붙임
+            combined.Add(mapLine + infoLine);
         }
         
-        // 로그 박스 생성
+        // 로그 박스 생성 (전체 너비)
         var logBoxLines = BuildLogBox(worldLogWidth, worldLogHeight, "(입력: W,A,S,D / 상태: I)");
         
-        // 로그와 정보 박스를 같은 줄에 배치 (공백 없이 바로 붙임)
+        // 로그 박스를 아래에 추가
         for (int i = 0; i < worldLogHeight; i++)
         {
             string logLine = (i < logBoxLines.Count) ? logBoxLines[i] : new string(' ', worldLogWidth);
-            string infoLine = (i < infoBoxLines.Count) ? infoBoxLines[i] : new string(' ', worldInfoWidth);
-            // 로그 박스와 정보 박스를 공백 없이 바로 붙임
-            combined.Add(logLine + infoLine);
+            
+            // 로그 박스 실제 문자열 길이 확인 (ANSI 코드 포함)
+            int logLineActualLen = logLine.Length;
+            if (logLineActualLen < worldLogWidth)
+            {
+                logLine += new string(' ', worldLogWidth - logLineActualLen);
+            }
+            else if (logLineActualLen > worldLogWidth)
+            {
+                // ANSI 코드를 고려하여 잘라내기
+                logLine = PadOrTrimVisible(logLine, worldLogWidth);
+            }
+            
+            combined.Add(logLine);
         }
         
         return combined;
@@ -1555,13 +1497,13 @@ class MUDServer
     // 오버로드: 기본값 사용 (하위 호환성)
     private List<string> BuildWorldTopLayout(Player viewer, int screenWidth, int screenHeight, out int totalWidth)
     {
-        int worldMapHeight = (screenHeight * 2) / 3;
-        int worldLogY = worldMapHeight;
-        int worldLogHeight = screenHeight - worldLogY;
-        int worldInfoX = (screenWidth * 3) / 5;
-        int worldLogWidth = worldInfoX;
-        int worldInfoWidth = screenWidth - worldInfoX;
-        return BuildWorldTopLayout(viewer, screenWidth, worldMapHeight, worldLogWidth, worldLogHeight, worldInfoX, worldInfoWidth, out totalWidth);
+        int worldLogHeight = 10;
+        int worldInfoWidth = 35;
+        int worldMapWidth = screenWidth - worldInfoWidth;
+        int worldMapHeight = screenHeight - worldLogHeight;
+        int worldLogWidth = screenWidth;
+        int worldInfoX = worldMapWidth;
+        return BuildWorldTopLayout(viewer, screenWidth, worldMapWidth, worldMapHeight, worldLogWidth, worldLogHeight, worldInfoX, worldInfoWidth, out totalWidth);
     }
 
     private string BuildLogLine(int lineIndex, int logWidth, int logHeight)
@@ -1584,6 +1526,9 @@ class MUDServer
     {
         var rows = new List<string>(viewportHeight);
         
+        // 플레이어 목록을 미리 정렬 (매번 계산하지 않도록)
+        var playersOrdered = gamePlayers.Values.OrderBy(p => p.ClientId).ToList();
+        
         for (int y = 0; y < viewportHeight; y++)
         {
             var sb = new StringBuilder();
@@ -1592,69 +1537,119 @@ class MUDServer
                 int mapX = cameraX + x;
                 int mapY = cameraY + y;
                 
-                char tile = ' ';
-                if (mapX >= 0 && mapX < MapWidth && mapY >= 0 && mapY < MapHeight)
+                // 뷰포트 경계(첫 번째/마지막 행과 열)는 항상 벽으로 표시
+                bool isBoundary = (x == 0 || x == viewportWidth - 1 || y == 0 || y == viewportHeight - 1);
+                
+                char tile = '.'; // 기본값을 '.'으로 설정 (이동 가능한 바닥)
+                
+                // 경계가 아닐 때만 맵 타일과 오브젝트를 표시
+                if (!isBoundary && mapX >= 0 && mapX < MapWidth && mapY >= 0 && mapY < MapHeight)
                 {
                     tile = map[mapX, mapY];
-                }
-                
-                // 몬스터 표시
-                foreach (var m in monsters)
-                {
-                    if (m.X == mapX && m.Y == mapY && m.X >= 0 && m.X < MapWidth && m.Y >= 0 && m.Y < MapHeight)
+                    // 맵의 빈 공간은 '.'으로 표시
+                    if (tile == ' ')
                     {
-                        tile = m.Icon;
-                        break;
+                        tile = '.';
+                    }
+                    
+                    // 몬스터 표시 (경계 벽 위치 제외)
+                    if (mapX > 0 && mapX < MapWidth - 1 && mapY > 0 && mapY < MapHeight - 1)
+                    {
+                        foreach (var m in monsters)
+                        {
+                            if (m.X == mapX && m.Y == mapY && m.X > 0 && m.X < MapWidth - 1 && m.Y > 0 && m.Y < MapHeight - 1)
+                            {
+                                tile = m.Icon;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // 상자 표시 (경계 벽 위치 제외)
+                    if (mapX > 0 && mapX < MapWidth - 1 && mapY > 0 && mapY < MapHeight - 1)
+                    {
+                        foreach (var chest in chests)
+                        {
+                            if (!chest.IsOpen && chest.X == mapX && chest.Y == mapY && chest.X > 0 && chest.X < MapWidth - 1 && chest.Y > 0 && chest.Y < MapHeight - 1)
+                            {
+                                tile = chest.Icon;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // 함정 표시 (경계 벽 위치 제외)
+                    if (mapX > 0 && mapX < MapWidth - 1 && mapY > 0 && mapY < MapHeight - 1)
+                    {
+                        foreach (var trap in traps)
+                        {
+                            if (!trap.IsTriggered && trap.X == mapX && trap.Y == mapY && trap.X > 0 && trap.X < MapWidth - 1 && trap.Y > 0 && trap.Y < MapHeight - 1)
+                            {
+                                tile = trap.Icon;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // 플레이어 표시
+                    for (int idx = 0; idx < playersOrdered.Count; idx++)
+                    {
+                        var p = playersOrdered[idx];
+                        if (p.HP > 0 && p.X == mapX && p.Y == mapY && p.X >= 0 && p.X < MapWidth && p.Y >= 0 && p.Y < MapHeight)
+                        {
+                            tile = (idx == 0) ? '1' : (idx == 1) ? '2' : 'P';
+                            break;
+                        }
                     }
                 }
-                
-                // 상자 표시
-                foreach (var chest in chests)
+                else if (isBoundary)
                 {
-                    if (!chest.IsOpen && chest.X == mapX && chest.Y == mapY && chest.X >= 0 && chest.X < MapWidth && chest.Y >= 0 && chest.Y < MapHeight)
-                    {
-                        tile = chest.Icon;
-                        break;
-                    }
-                }
-                
-                // 함정 표시
-                foreach (var trap in traps)
-                {
-                    if (!trap.IsTriggered && trap.X == mapX && trap.Y == mapY && trap.X >= 0 && trap.X < MapWidth && trap.Y >= 0 && trap.Y < MapHeight)
-                    {
-                        tile = trap.Icon;
-                        break;
-                    }
-                }
-                
-                // 플레이어 표시
-                var playersOrdered = gamePlayers.Values.OrderBy(p => p.ClientId).ToList();
-                for (int idx = 0; idx < playersOrdered.Count; idx++)
-                {
-                    var p = playersOrdered[idx];
-                    if (p.HP > 0 && p.X == mapX && p.Y == mapY && p.X >= 0 && p.X < MapWidth && p.Y >= 0 && p.Y < MapHeight)
-                    {
-                        tile = (idx == 0) ? '1' : (idx == 1 ? '2' : 'P');
-                        break;
-                    }
+                    // 경계는 항상 벽
+                    tile = '█';
                 }
                 
                 string cell = tile.ToString();
-                if (tile == '1')
-                    cell = $"{C_GREEN}@{C_RESET}";
-                else if (tile == '2')
-                    cell = $"{C_YELLOW}@{C_RESET}";
+                if (tile == '1' || tile == '2' || tile == 'P')
+                {
+                    var playerAtPos = playersOrdered.FirstOrDefault(p => p.HP > 0 && p.X == mapX && p.Y == mapY);
+                    if (playerAtPos != null)
+                    {
+                        int playerIdx = playersOrdered.IndexOf(playerAtPos);
+                        if (playerIdx == 0)
+                            cell = $"{C_GREEN}@{C_RESET}";
+                        else if (playerIdx == 1)
+                            cell = $"{C_YELLOW}@{C_RESET}";
+                        else
+                            cell = "@";
+                    }
+                }
                 else if (tile == 'M' || tile == 'G' || tile == 'S' || tile == '*' || tile == '^')
+                {
                     cell = $"{C_RED}{tile}{C_RESET}";
+                }
                 else if (tile == '█')
+                {
                     cell = tile.ToString(); // 벽은 기본 색상
+                }
                 else if (tile == '.')
+                {
                     cell = tile.ToString(); // 바닥은 기본 색상
-                
+                }
+
                 sb.Append(cell);
             }
-            rows.Add(sb.ToString());
+            string row = sb.ToString();
+            // 각 줄이 정확히 viewportWidth 가시적 길이가 되도록 보장
+            int visibleLen = VisibleLength(row);
+            if (visibleLen < viewportWidth)
+            {
+                row += new string(' ', viewportWidth - visibleLen);
+            }
+            else if (visibleLen > viewportWidth)
+            {
+                row = PadOrTrimVisible(row, viewportWidth);
+            }
+            rows.Add(row);
         }
         return rows;
     }
@@ -1665,6 +1660,11 @@ class MUDServer
         if (viewer == null)
         {
             viewer = playersOrdered.FirstOrDefault() ?? gamePlayers.Values.FirstOrDefault();
+            if (viewer == null)
+            {
+                // 플레이어가 없으면 빈 정보 반환
+                return new List<string> { "플레이어 없음" };
+            }
         }
 
         var info = new List<string>();
@@ -1702,6 +1702,10 @@ class MUDServer
         info.Add("   " + BuildBarColored(Math.Min(12, infoWidth - 8), viewer.HP, viewer.MaxHP, C_RED));
         info.Add($"MP: {viewer.MP}/{viewer.MaxMP}");
         info.Add("   " + BuildBarColored(Math.Min(12, infoWidth - 8), viewer.MP, viewer.MaxMP, C_BLUE));
+        info.Add($"EXP: {viewer.EXP}/{viewer.EXPNext}");
+        info.Add("   " + BuildBarColored(Math.Min(12, infoWidth - 8), viewer.EXP, viewer.EXPNext, C_GREEN));
+        info.Add($"STR:{viewer.STR}  INT:{viewer.INT}  DEX:{viewer.DEX}");
+        info.Add($"ATK:{viewer.ATK}  DEF:{viewer.DEF}");
         
         // maxHeight가 지정되어 있으면 빈 줄로 채움 (박스 크기 고정)
         if (maxHeight > 0)
@@ -1783,6 +1787,28 @@ class MUDServer
         content.Add("   " + BuildBarColored(barWidth, player.EXP, player.EXPNext, C_GREEN));
         content.Add($"STR:{player.STR}  INT:{player.INT}  DEX:{player.DEX}");
         content.Add($"ATK:{player.ATK}  DEF:{player.DEF}");
+        content.Add(string.Empty);
+        
+        // 최근 로그 메시지 표시 (최대 3개)
+        content.Add("--- Actions ---");
+        int logCount = 0;
+        int maxLogLines = 3;
+        int contentWidth = totalWidth - 4; // 테두리 제외
+        int logsToSkip = Math.Max(0, logMessages.Count - maxLogLines);
+        foreach (var log in logMessages.Skip(logsToSkip))
+        {
+            if (logCount >= maxLogLines) break;
+            string trimmedLog = PadOrTrimVisible(log, contentWidth);
+            content.Add(trimmedLog);
+            logCount++;
+        }
+        // 로그가 부족하면 빈 줄로 채움
+        while (logCount < maxLogLines)
+        {
+            content.Add(string.Empty);
+            logCount++;
+        }
+        
         content.Add(string.Empty);
         content.Add("--- 파티 ---");
         foreach (var member in gamePlayers.Values)
@@ -1935,11 +1961,31 @@ class MUDServer
         lines.Add(BuildBorder(width, '╔', '═', '╗', title));
 
         int innerHeight = height - 2; // 상단/하단 테두리 제외
+        int innerWidth = width - 2; // 좌우 테두리 제외
         // contentLines가 많아도 박스 크기는 고정
         for (int i = 0; i < innerHeight; i++)
         {
             string content = (contentLines != null && i < contentLines.Count) ? contentLines[i] ?? string.Empty : string.Empty;
-            string fitted = PadOrTrimVisible(content, width - 2);
+            // 맵 내용은 이미 정확한 크기이므로, 다른 내용만 PadOrTrimVisible 적용
+            string fitted;
+            if (contentLines != null && i < contentLines.Count && contentLines[i] != null)
+            {
+                int visibleLen = VisibleLength(content);
+                if (visibleLen == innerWidth)
+                {
+                    // 이미 정확한 크기면 그대로 사용 (맵 내용)
+                    fitted = content;
+                }
+                else
+                {
+                    // 다른 내용은 PadOrTrimVisible로 맞춤
+                    fitted = PadOrTrimVisible(content, innerWidth);
+                }
+            }
+            else
+            {
+                fitted = new string(' ', innerWidth);
+            }
             lines.Add("║" + fitted + "║");
         }
 
@@ -2047,14 +2093,15 @@ class MUDServer
         return value;
     }
 
-    private string GetTurnMark(Player viewer, Player target)
+    private string GetTurnMark(Player? viewer, Player? target)
     {
-        if (currentPlayerTurn == null || target != currentPlayerTurn) return string.Empty;
+        if (viewer == null || target == null || currentPlayerTurn == null || target != currentPlayerTurn) return string.Empty;
         return target == viewer ? "<- (Your Turn)" : "<- (Turn)";
     }
 
-    private string GetPlayerColor(Player p, List<Player> ordered)
+    private string GetPlayerColor(Player? p, List<Player> ordered)
     {
+        if (p == null) return C_RESET;
         int idx = Math.Max(0, ordered.IndexOf(p));
         return idx == 0 ? C_GREEN : (idx == 1 ? C_YELLOW : C_RESET);
     }

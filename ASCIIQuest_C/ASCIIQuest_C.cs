@@ -9,9 +9,9 @@ using System.Threading;
 
 class MUDClient
 {
-    private TcpClient client;
-    private StreamWriter writer; 
-    private StreamReader reader; 
+    private TcpClient? client;
+    private StreamWriter? writer; 
+    private StreamReader? reader; 
     private bool connected = false;
 
     public MUDClient(string serverAddress, int port)
@@ -65,9 +65,9 @@ class MUDClient
         {
             try
             {
-                while (connected)
+                while (connected && reader != null)
                 {
-                    string singleLineData = reader.ReadLine(); 
+                    string? singleLineData = reader.ReadLine(); 
                     
                     if (singleLineData != null)
                     {
@@ -160,7 +160,7 @@ class MUDClient
                                 Console.CursorVisible = false;
                             }
                         }
-                        catch (Exception ex)
+                        catch (Exception)
                         {
                             // 디버깅용 (나중에 제거 가능)
                             // Console.SetCursorPosition(0, 0);
@@ -243,7 +243,7 @@ class MUDClient
 
     private void SendMessage(string message)
     {
-        if (!connected) return;
+        if (!connected || writer == null) return;
         try
         {
             writer.WriteLine(message); 
@@ -267,7 +267,7 @@ class Program
 {
     static void Main()
     {
-        string serverAddress = "127.0.0.1";
+        string serverAddress = "10.60.22.85";
         
         // [참고] 만약 '소켓' 오류가 나면 12346으로 변경
         int port = 12345; 
