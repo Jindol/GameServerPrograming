@@ -73,7 +73,6 @@ public class Game
         Multiplayer_World,
         Multiplayer_Battle,
         Multiplayer_BattleResultWait, // [신규] 전투 결과 확인 후 대기 상태
-        Multiplayer_PortalWait
     }
 
     // 화면 셀
@@ -111,6 +110,8 @@ public class Game
         }
     }
 
+    private const int PORTAL_DETECTION_RANGE_SQ = 9;
+
     private Player otherPlayer;              // 상대방 플레이어 (파란색 캐릭터)
     public Player OtherPlayer => otherPlayer;
     private bool iSelectedClass = false;     // 나 직업 골랐니?
@@ -124,8 +125,6 @@ public class Game
 
     private bool isOtherPlayerFinishedBattleResult = false;
 
-    private bool isSoloModeInMultiplayer = false;
-
     private bool isGameChatting = false; // 현재 채팅 입력 중인가?
     private string gameChatInput = "";   // 입력 중인 내용
 
@@ -134,8 +133,6 @@ public class Game
     private int directIpBtnIndex = 0;        // 0: 접속, 1: 취소
     private RoomInfo myHostingRoom = null;
     private bool isEnteringIp = true;        // 포커스 (텍스트 vs 버튼)
-
-    private bool isOtherPlayerAtPortal = false; // [신규] 상대방이 포탈에 도착했는지 여부
 
     private DateTime lastBattleActionTime = DateTime.Now;
 
@@ -427,34 +424,29 @@ public class Game
     #region Game_Initialization
     public bool Start()
     {
-        // 1. 네트워크 상태 완전 초기화
         NetworkManager.Instance.Close(); 
-
-        // 2. 콘솔 초기화
         InitializeConsole();
 
-        // 3. 상태 변수 초기화
         gameRunning = true;
         needsRestart = false;
         logMessages.Clear();
 
-        // [핵심 수정] 멀티플레이 잔여 데이터(상대방 플레이어) 제거
         otherPlayer = null;
         otherPlayerNickname = "???";
         otherSelectedClass = false;
         isOtherPlayerReady = false;
-        // 필요한 경우 추가 초기화
         myFleeRequest = false;
         otherFleeRequest = false;
 
         currentBattleMonster = null; 
         monsters.Clear();
+        
+        // [핵심 수정] 스테이지 정보 초기화 (재시작 시 1스테이지부터)
+        currentStage = 1;
 
-        // 4. 메인 메뉴
         currentState = GameState.MainMenu;
         mainMenuIndex = 0;
 
-        // 5. 메인 루프 시작
         RunGameLoop();
 
         return needsRestart;
@@ -476,7 +468,6 @@ public class Game
     {
         currentStage = stage;
         portalPosition = (-1, -1); 
-        isOtherPlayerAtPortal = false; 
 
         InitializeGameData(); 
 
@@ -1180,7 +1171,8 @@ public class Game
             // ============================================================
             
             // [핵심 수정] 조건 변경: Host만이 아니라 'SoloMode'인 게스트도 감시해야 함
-            bool canControlMonster = NetworkManager.Instance.IsHost || isSoloModeInMultiplayer;
+            bool isFightingSolo = (otherPlayer == null || otherPlayer.IsDead);
+            bool canControlMonster = NetworkManager.Instance.IsHost;
 
             if (canControlMonster && currentState == GameState.Multiplayer_Battle)
             {
@@ -1188,7 +1180,7 @@ public class Game
                 int requiredActions = 2;
                 if (player.IsDead) requiredActions--;
                 if (otherPlayer != null && otherPlayer.IsDead) requiredActions--;
-                if (isSoloModeInMultiplayer) requiredActions = 1;
+                if (isFightingSolo) requiredActions = 1;
                 if (requiredActions < 1) requiredActions = 1;
 
                 // 2. 멈춤 감지
@@ -1238,8 +1230,7 @@ public class Game
                                       currentState == GameState.Inventory ||
                                       currentState == GameState.CharacterStat ||
                                       currentState == GameState.Pause || 
-                                      currentState == GameState.HowToPlay ||
-                                      currentState == GameState.Multiplayer_PortalWait);
+                                      currentState == GameState.HowToPlay);
 
                 if (isWorldActive && currentBattleMonster == null)
                 {
@@ -1453,9 +1444,6 @@ public class Game
                     case GameState.Multiplayer_Room_LeaveConfirm: ProcessRoomLeaveConfirmInput(key); break;
                     case GameState.Multiplayer_Nick_ExitConfirm: ProcessNickExitConfirmInput(key); break;
                     case GameState.Multiplayer_ClassSelect_ExitConfirm: ProcessClassSelectExitConfirmInput(key); break;
-                    case GameState.Multiplayer_PortalWait:
-                        ProcessPortalWaitInput(key); // [신규]
-                        break;
                 }
 
                 // 입력 버퍼 비우기 (빠른 연타 방지)
@@ -1544,9 +1532,6 @@ public class Game
             case GameState.Multiplayer_Room_LeaveConfirm:
                 DrawRoomWait();        // 배경으로 대기실을 먼저 그림
                 DrawRoomLeaveConfirm(); // 위에 팝업을 덮어씌움
-                break;
-            case GameState.Multiplayer_PortalWait:
-                DrawPortalWait();
                 break;
 
             case GameState.Multiplayer_PasswordInput:
@@ -1763,9 +1748,8 @@ public class Game
         bool isMulti = NetworkManager.Instance.IsConnected || NetworkManager.Instance.IsHost;
 
         // [핵심 수정] 동료를 그릴지 여부 결정
-        // 기존: !isSoloModeInMultiplayer (동료가 죽으면 isSoloMode가 true가 되어 안 그려짐)
         // 변경: !IsWaitingAtPortal (동료가 죽었어도 포탈을 탄 게 아니라면 그려야 함)
-        bool drawOtherPlayer = isMulti && otherPlayer != null && !otherPlayer.IsWaitingAtPortal;
+        bool drawOtherPlayer = isMulti && otherPlayer != null;
 
         // 1. 각 개체의 아스키 아트 너비(Width) 계산
         string[] p1Art = AsciiArt.GetPlayerArt(player.Class);
@@ -2445,20 +2429,52 @@ public class Game
         int viewportHeight = viewHeight - 2; 
         int cameraX = player.X - (viewportWidth / 2);
         int cameraY = player.Y - (viewportHeight / 2);
+        
+        // 카메라 범위 제한
         cameraX = Math.Max(0, Math.Min(cameraX, MapWidth - viewportWidth));
         cameraY = Math.Max(0, Math.Min(cameraY, MapHeight - viewportHeight));
+
         for (int y = 0; y < viewportHeight; y++){
             for (int x = 0; x < viewportWidth; x++){
                 int mapX = cameraX + x;
                 int mapY = cameraY + y;
+                
                 if (mapX >= 0 && mapX < MapWidth && mapY >= 0 && mapY < MapHeight){
                     char tile = map[mapX, mapY];
-                    ConsoleColor color = ConsoleColor.DarkGray; 
-                    if (tile == '█') color = ConsoleColor.Gray; 
-                    else if (tile == '^' || tile == '*') color = ConsoleColor.DarkRed; 
-                    else if (tile == '.') color = ConsoleColor.DarkGray;
-                    else if (tile == 'O') color = ConsoleColor.Magenta; // [신규] 포탈 색상
-                    DrawToBuffer(x + 1, y + 1, tile, color);
+                    
+                    ConsoleColor fgColor = ConsoleColor.DarkGray; 
+                    ConsoleColor bgColor = ConsoleColor.Black; // 기본 배경
+
+                    // [신규] 포탈 주변 범위 시각화
+                    // 포탈이 존재하고(-1 아님), 현재 타일이 포탈 범위 내라면 배경색 변경
+                    if (portalPosition.x != -1)
+                    {
+                        int distSq = (mapX - portalPosition.x) * (mapX - portalPosition.x) + 
+                                     (mapY - portalPosition.y) * (mapY - portalPosition.y);
+                        
+                        if (distSq <= PORTAL_DETECTION_RANGE_SQ)
+                        {
+                            bgColor = ConsoleColor.DarkMagenta; // 보라색 배경
+                        }
+                    }
+
+                    // 타일 색상 설정
+                    if (tile == '█') fgColor = ConsoleColor.Gray; 
+                    else if (tile == '^' || tile == '*') fgColor = ConsoleColor.DarkRed; 
+                    else if (tile == '.') 
+                    {
+                        // 포탈 범위 안의 바닥은 좀 더 밝은 보라색으로 점을 찍어줌
+                        if (bgColor == ConsoleColor.DarkMagenta) fgColor = ConsoleColor.Magenta;
+                        else fgColor = ConsoleColor.DarkGray;
+                    }
+                    else if (tile == 'O') 
+                    {
+                        fgColor = ConsoleColor.Magenta; 
+                        // 포탈 자체는 배경을 검정으로 두거나 유지 (여기선 범위 표시를 위해 유지)
+                    }
+                    
+                    // [수정] 배경색(bgColor)까지 함께 그리기
+                    DrawToBuffer(x + 1, y + 1, tile, fgColor, bgColor);
                 }
             }
         }
@@ -2507,8 +2523,6 @@ public class Game
         if (otherPlayer != null)
         {
             // [핵심] 동료가 포탈 대기 중이면 그리지 않음
-            if (!otherPlayer.IsWaitingAtPortal)
-            {
                 int otherScreenX = otherPlayer.X - cameraX + 1;
                 int otherScreenY = otherPlayer.Y - cameraY + 1;
                 
@@ -2518,7 +2532,6 @@ public class Game
                     ConsoleColor oColor = otherPlayer.IsDead ? ConsoleColor.DarkGray : ConsoleColor.Cyan;
                     DrawToBuffer(otherScreenX, otherScreenY, '@', oColor); 
                 }
-            }
         }
 
         
@@ -2754,11 +2767,11 @@ public class Game
     
    public void StartBattle(Monster monster, bool isFromTrap = false)
     {
+        ForceCloseChestUI();
         // 1. 전투 대상 설정 (맵상의 몬스터)
         currentBattleMonster = monster;
 
-        // [핵심] 맵 상의 몬스터 객체 참조 저장
-        // (StartMultiplayerBattle에서 currentBattleMonster가 복사본으로 덮어써지기 전에 저장)
+        // 맵 상의 몬스터 객체 참조 저장
         currentMapMonsterReference = monster;
 
         isTrapBattle = isFromTrap;
@@ -2773,7 +2786,7 @@ public class Game
         // =============================================================
         if (NetworkManager.Instance.IsConnected || NetworkManager.Instance.IsHost)
         {
-            // [중요] 미믹 스탯 보존 로직 (기존 유지)
+            // [중요] 미믹 스탯 보존 로직
             int passMaxHP = -1, passAtk = -1, passDef = -1, passExp = -1;
             if (monster.MonsterId == "mimic")
             {
@@ -2787,48 +2800,44 @@ public class Game
             StartMultiplayerBattle(monster.MonsterId, true, isFromTrap, monster.X, monster.Y, 
                                    -1, passMaxHP, passAtk, passDef, passExp); 
 
-            // 2. [핵심 수정] 동료에게 패킷 전송 여부 결정
-            // 동료가 '포탈 대기 중'이라면 전투 패킷을 보내지 않습니다. (끌려감 방지)
-            // 동료가 '사망' 상태라면 관전을 위해 패킷을 보냅니다.
-            bool shouldSendPacket = true;
-            if (otherPlayer != null && otherPlayer.IsWaitingAtPortal)
-            {
-                shouldSendPacket = false;
-            }
+            // 2. [핵심 수정] 동료에게 전투 시작 패킷 전송
+            // (이전에는 포탈 대기 체크 로직 때문에 shouldSendPacket 변수가 있었으나, 
+            //  이제는 무조건 같이 진입해야 하므로 조건 없이 보냅니다.)
 
-            if (shouldSendPacket)
-            {
-                var data = new BattleStartData 
-                { 
-                    MonsterId = monster.MonsterId, 
-                    IsFromTrap = isFromTrap,
-                    MapX = monster.X,
-                    MapY = monster.Y,
-                    CurrentHP = -1,
-                    
-                    MaxHP = currentBattleMonster.MaxHP,
-                    ATK = currentBattleMonster.ATK,
-                    DEF = currentBattleMonster.DEF,
-                    EXPReward = currentBattleMonster.EXPReward
-                };
+            var data = new BattleStartData 
+            { 
+                MonsterId = monster.MonsterId, 
+                IsFromTrap = isFromTrap,
+                MapX = monster.X,
+                MapY = monster.Y,
+                CurrentHP = -1,
                 
-                var packet = new Packet 
-                { 
-                    Type = PacketType.BattleStart, 
-                    Data = JsonSerializer.Serialize(data) 
-                };
-                NetworkManager.Instance.Send(packet);
-            }
+                MaxHP = currentBattleMonster.MaxHP,
+                ATK = currentBattleMonster.ATK,
+                DEF = currentBattleMonster.DEF,
+                EXPReward = currentBattleMonster.EXPReward
+            };
+
+            Thread.Sleep(100); // 패킷 뭉침 방지 딜레이
+
+            var packet = new Packet 
+            { 
+                Type = PacketType.BattleStart, 
+                Data = JsonSerializer.Serialize(data) 
+            };
+            NetworkManager.Instance.Send(packet);
         }
         else
         {
-            // 1. 스탯 초기화 (기본값으로 복원 후 스케일링)
+            // [싱글플레이] (기존 로직 유지)
+            
+            // 1. 스탯 초기화
             monster.MaxHP = monster.OriginalMaxHP;
             monster.ATK = monster.OriginalATK;
             monster.DEF = monster.OriginalDEF;
             monster.EXPReward = monster.OriginalEXPReward;
 
-            // 2. 레벨 스케일링 적용 (플레이어 레벨 > 1일 때)
+            // 2. 레벨 스케일링 적용
             if (player.Level > 1)
             {
                 double levelModifier = (double)(player.Level - 1);
@@ -2849,8 +2858,7 @@ public class Game
                 }
             }
 
-            // 3. [핵심] HP가 0이거나 초기화가 필요하다면 최대 체력으로 설정
-            // (이미 전투 중이던 몬스터가 아니라면 풀피로 시작)
+            // 3. HP 보정
             if (monster.HP <= 0 || monster.HP > monster.MaxHP)
             {
                 monster.HP = monster.MaxHP;
@@ -2947,9 +2955,9 @@ public class Game
             else if (c == 'F' || c == 'ㄹ') { TryOpenChest(); return; }
         }
 
-        if (newX == portalPosition.x && newY == portalPosition.y)
+       if (newX == portalPosition.x && newY == portalPosition.y)
         {
-            // [싱글플레이]
+            // [싱글플레이] 기존대로 즉시 이동
             if (!isMulti)
             {
                 if (currentStage < 3)
@@ -2960,7 +2968,9 @@ public class Game
                 else
                 {
                     AddLog("마지막 스테이지입니다. (엔딩)");
-                    // (엔딩 로직)
+                    // (엔딩 처리)
+                    gameClearTime = DateTime.Now - gameStartTime;
+                    StartEndingStory();
                 }
                 return;
             }
@@ -2971,7 +2981,7 @@ public class Game
                 if (currentStage >= 3) return; // 엔딩 처리
 
                 // 1. 동료 사망 or 이미 도착 -> 바로 이동
-                bool otherReady = (otherPlayer != null && (otherPlayer.IsDead || otherPlayer.IsWaitingAtPortal));
+                bool otherReady = (otherPlayer != null && (otherPlayer.IsDead));
                 
                 if (otherReady)
                 {
@@ -2984,21 +2994,13 @@ public class Game
                     }
                     else
                     {
-                        // 게스트는 입장 신호 보내고, 호스트가 맵 바꿔줄 때까지 대기
-                        NetworkManager.Instance.Send(new Packet { Type = PacketType.PortalEnter });
-                        currentState = GameState.Multiplayer_PortalWait;
+
                     }
                 }
                 // 2. 내가 먼저 도착 -> 대기 진입
                 else
                 {
-                    player.IsWaitingAtPortal = true;
                     SendMyPlayerInfo(); // (IsWaitingAtPortal = true 동기화)
-                    
-                    // 추가로 명시적인 포탈 진입 패킷도 전송 (확실한 트리거를 위해)
-                    NetworkManager.Instance.Send(new Packet { Type = PacketType.PortalEnter });
-
-                    currentState = GameState.Multiplayer_PortalWait;
                 }
                 return;
             }
@@ -3006,11 +3008,7 @@ public class Game
 
         if (isMulti && otherPlayer != null)
         {
-            // [핵심 수정] 동료가 포탈 대기 중이 아닐 때만 충돌 체크
-            if (!otherPlayer.IsWaitingAtPortal)
-            {
                 if (newX == otherPlayer.X && newY == otherPlayer.Y) return;
-            }
         }
 
         // --- 이하 이동 및 충돌 처리 로직 (변경 없음) ---
@@ -3051,12 +3049,13 @@ public class Game
             if (isMulti)
             {
                 SendMyPosition();
+                
+                // [핵심 신규] 이동할 때마다 포탈 조건을 체크 (호스트가 수행)
+                if (NetworkManager.Instance.IsHost)
+                {
+                    CheckMultiplayerPortalCondition();
+                }
             }
-
-            // [삭제] ProcessMonsterTurn_World();  <-- 이 줄을 지우세요! (이제 시간 기반으로 작동함)
-            
-            // 싱글플레이일 경우엔 여전히 턴제로 하고 싶다면:
-            //if (!isMulti) ProcessMonsterTurn_World();
         }
     }
 
@@ -3067,14 +3066,21 @@ public class Game
         {
             otherPlayer.X = data.X;
             otherPlayer.Y = data.Y;
-            NetworkManager.Instance.IsDirty = true; // 화면 갱신
+            NetworkManager.Instance.IsDirty = true;
+
+            // [신규] 동료가 움직였으니 포탈 조건 재확인 (호스트만)
+            if (NetworkManager.Instance.IsHost)
+            {
+                CheckMultiplayerPortalCondition();
+            }
         }
     }
 
     private void StartMultiplayerBattle(string monsterId, bool isLocalCall, bool isFromTrap, int mapX, int mapY, 
                                         int currentHP = -1, int maxHP = -1, int atk = -1, int def = -1, int exp = -1)
     {
-        if (currentState == GameState.Multiplayer_PortalWait) return;
+
+        ForceCloseChestUI();
         // 1. 몬스터 생성
         Monster monster = MonsterDB.CreateMonster(monsterId, 0, 0);
         
@@ -3124,23 +3130,28 @@ public class Game
         if (currentHP != -1) monster.HP = currentHP;
         else monster.HP = monster.MaxHP;
 
+        isOtherPlayerFinishedBattleResult = false;
+
         currentBattleMonster = monster;
         currentBattleMapX = mapX;
         currentBattleMapY = mapY;
         isTrapBattle = isFromTrap; 
 
+        if (currentMapMonsterReference == null && !isFromTrap)
+        {
+            // 좌표와 ID가 일치하는 몬스터를 내 맵에서 찾음
+            currentMapMonsterReference = monsters.FirstOrDefault(m => m.X == mapX && m.Y == mapY && m.MonsterId == monsterId);
+        }
+
         battleTurnCount = 0;
 
         // 2. 솔로 모드 판정
-        if (otherPlayer == null || otherPlayer.IsDead || otherPlayer.IsWaitingAtPortal)
-            isSoloModeInMultiplayer = true;
-        else
-            isSoloModeInMultiplayer = false;
+       bool isFightingSolo = (otherPlayer == null || otherPlayer.IsDead);
 
-        // 3. 턴 순서 결정
-        if (isSoloModeInMultiplayer)
+        // 턴 순서 결정
+        if (isFightingSolo)
         {
-            isMyBattleTurn = true; 
+            isMyBattleTurn = true; // 혼자니까 내 턴
         }
         else
         {
@@ -3152,11 +3163,8 @@ public class Game
                 else isMyBattleTurn = NetworkManager.Instance.IsHost;
             }
         }
-
-        if (player.IsDead)
-        {
-            isMyBattleTurn = false;
-        }
+        
+        if (player.IsDead) isMyBattleTurn = false; // (안전장치)
         
         SetupBattleIntro(monster, isFromTrap);
         currentState = GameState.Battle_Intro;
@@ -3172,11 +3180,9 @@ public class Game
     {
         // [수정] 포탈 대기 중이라도, 이 패킷은 전투 난입 신호일 수 있으므로 
         // 무조건 무시하지 말고 상황을 봐야 함.
-        // 하지만 ProcessPortalWaitInput에서 'B'를 눌러 상태를 풀고 World로 온 직후라면
         // currentState는 World일 것임.
         
         // 만약 여전히 PortalWait 상태라면 무시 (아직 복귀 안 함)
-        if (currentState == GameState.Multiplayer_PortalWait) return;
 
         var data = JsonSerializer.Deserialize<BattleStartData>(json);
         
@@ -3314,7 +3320,7 @@ public class Game
     private void AttemptFleeVote()
     {
         // [핵심 수정] 솔로 모드(동료 사망/포탈)라면 즉시 후퇴
-        if (isSoloModeInMultiplayer)
+        if (otherPlayer == null || otherPlayer.IsDead)
         {
             AddLog("전투에서 도망칩니다!", ConsoleColor.Yellow);
             FleeBattle(); // 로컬 후퇴 처리
@@ -3337,6 +3343,7 @@ public class Game
         {
             AddLog("후퇴에 동의했습니다! 도망칩니다!");
             NetworkManager.Instance.Send(new Packet { Type = PacketType.BattleEnd });
+            Thread.Sleep(100);
             FleeBattle();
         }
         else
@@ -3356,6 +3363,8 @@ public class Game
         battleTurnCount++; 
 
         lastBattleActionTime = DateTime.Now;
+
+        Thread.Sleep(50);
 
         // 턴 종료 패킷 전송
         var packet = new Packet { Type = PacketType.BattleTurnEnd };
@@ -3394,7 +3403,7 @@ public class Game
         if (otherPlayer != null && otherPlayer.IsDead) requiredActions--;
         
         // [수정] 솔로 모드면 1명, 아니면(동료 복귀함) 2명
-        if (isSoloModeInMultiplayer) requiredActions = 1;
+        if (otherPlayer == null || otherPlayer.IsDead) requiredActions = 1;
 
         if (requiredActions < 1) requiredActions = 1; 
 
@@ -3403,9 +3412,7 @@ public class Game
         {
             isMyBattleTurn = false; 
 
-            // [핵심 수정] 2번 문제 해결: 호스트거나, '솔로 모드'라면 내가 직접 몬스터 턴 처리
-            // (호스트가 포탈에 있어서 처리를 못 해주므로 게스트가 스스로 처리해야 함)
-            if (NetworkManager.Instance.IsHost || isSoloModeInMultiplayer)
+            if (NetworkManager.Instance.IsHost || (otherPlayer == null || otherPlayer.IsDead))
             {
                 ProcessMultiplayerMonsterTurn();
             }
@@ -3842,21 +3849,22 @@ private void ApplyRemoteSkillEffects(string skillName, Monster target)
 
         if (NetworkManager.Instance.IsConnected || NetworkManager.Instance.IsHost)
         {
-            // [핵심 수정] 무조건 차단하지 않고, 사용 성공 여부를 먼저 확인합니다.
+            // 1. 아이템 사용 시도 (성공 시 내부에서 애니메이션 상태로 전환됨)
             bool success = MultiplayerBattleManager.PerformLocalItem(this, player, items[index]);
 
             if (success)
             {
-                // 성공했을 때만 조작 차단 및 화면 전환
-                isMyBattleTurn = false;
-                currentState = GameState.Multiplayer_Battle;
+                // [핵심 수정] currentState 변경 코드 삭제!
+                // PerformLocalItem -> StartBuffAnimation에서 이미 'Battle_Animation'으로 상태를 바꿨으므로,
+                // 여기서 'Multiplayer_Battle'로 덮어쓰면 애니메이션과 턴 종료 콜백이 씹혀버립니다.
+                
+                isMyBattleTurn = false; // 조작만 차단
+
+                // currentState = GameState.Multiplayer_Battle; // <--- [삭제] 이 줄을 지우세요.
             }
             else
             {
-                // 실패 시 (HP/MP 가득 참 등)
-                // UseConsumable 내부에서 이미 "가득 찼습니다" 로그를 출력했으므로
-                // 여기서는 아무것도 하지 않고 메뉴 상태를 유지하면 됩니다.
-                // (isMyBattleTurn이 true로 유지되므로 다시 선택 가능)
+                // 실패 시(가득 참 등)에는 메뉴 유지
             }
         }
         else
@@ -4545,45 +4553,65 @@ private void ApplyRemoteSkillEffects(string skillName, Monster target)
         // 3. 맵 상의 몬스터 삭제 (멀티플레이 동기화)
         bool isMulti = NetworkManager.Instance.IsConnected || NetworkManager.Instance.IsHost;
 
-        // 함정 몬스터나 미믹이 아니라면, 맵 리스트에서 제거 시도
-        if (!isTrapBattle && currentBattleMonster.MonsterId != "mimic")
+        // 미믹(상자)은 이미 Chest.Open에서 처리되므로 제외
+        if (currentBattleMonster.MonsterId != "mimic")
         {
-            if (isMulti)
+            // [Case A] 함정 전투였을 경우 (Trap)
+           // [공통] 함정 전투였다면, 내 화면에서 함정 삭제 처리
+            if (isTrapBattle && isMulti)
             {
-                // [Case A] 호스트
-                if (NetworkManager.Instance.IsHost)
+                // 좌표로 함정 찾기
+                var mapTrap = traps.FirstOrDefault(t => t.X == currentBattleMapX && t.Y == currentBattleMapY);
+                
+                // 만약 리스트에 없더라도(이미 지워졌거나 등), 좌표 기반으로 삭제 패킷은 보내야 함
+                if (mapTrap == null)
                 {
-                    // 호스트는 참조가 있다면 그것을, 없다면 좌표로 찾음
-                    var target = currentMapMonsterReference ?? monsters.FirstOrDefault(m => m.X == currentBattleMapX && m.Y == currentBattleMapY);
-                    
-                    if (target != null && monsters.Contains(target))
-                    {
-                        monsters.Remove(target);
-                        // 삭제 시점의 최신 좌표로 패킷 전송 (이동했을 수 있으므로)
-                        SendMonsterDead(target.X, target.Y);
-                    }
+                    // 더미 트랩 생성 (삭제 패킷 전송용)
+                    mapTrap = new Trap(currentBattleMapX, currentBattleMapY, TrapType.Battle, '^');
                 }
-                // [Case B] 게스트 솔로 (호스트 부재)
-                else if (isSoloModeInMultiplayer)
+                else
                 {
-                    // [핵심 수정] 저장해둔 참조를 사용하여 삭제
-                    // (전투 중 MonsterUpdate 패킷으로 인해 X,Y가 바뀌었어도 객체 참조는 유지됨)
-                    var target = currentMapMonsterReference;
+                    // 내 화면 갱신
+                    mapTrap.ForceTrigger(this);
+                    Thread.Sleep(50);
+                    SendTrapUpdatePacket(mapTrap);
+                }
 
-                    if (target != null && monsters.Contains(target))
-                    {
-                        monsters.Remove(target); // 내 화면 삭제
-                        
-                        // [중요] 이동된 최신 좌표(target.X, target.Y)를 호스트에게 알림
-                        SendMonsterDead(target.X, target.Y); 
-                    }
+                // [핵심 수정] 멀티플레이라면 상대방에게 "이 좌표의 함정을 지워라" 명령 전송
+                if (isMulti)
+                {
+                    SendTrapUpdatePacket(mapTrap);
                 }
             }
+            // [Case B] 일반 몬스터 전투였을 경우 (Monster)
             else
             {
-                // [싱글플레이]
-                var target = currentMapMonsterReference ?? monsters.FirstOrDefault(m => m.X == currentBattleMapX && m.Y == currentBattleMapY);
-                if (target != null) monsters.Remove(target);
+                // 1. 내 화면에서 삭제
+                var mapMonster = monsters.FirstOrDefault(m => m.X == currentBattleMapX && m.Y == currentBattleMapY);
+                
+                // (혹시 이동했을 수 있으니 참조로도 시도 - 호스트용)
+                if (mapMonster == null && NetworkManager.Instance.IsHost && currentMapMonsterReference != null)
+                {
+                    mapMonster = currentMapMonsterReference;
+                }
+
+                if (mapMonster != null)
+                {
+                    monsters.Remove(mapMonster);
+                    Thread.Sleep(50);
+                    SendMonsterDead(currentBattleMapX, currentBattleMapY);
+                }
+
+                // 2. 멀티플레이라면 상대방에게 삭제 요청
+                if (isMulti)
+                {
+                    // [핵심] MonsterDead 패킷 전송 -> 상대방 화면에서도 지워짐
+                    // (내가 지운 몬스터의 좌표를 보냄. 만약 내 화면에서 못 찾았어도 전투 좌표로 보냄)
+                    int delX = (mapMonster != null) ? mapMonster.X : currentBattleMapX;
+                    int delY = (mapMonster != null) ? mapMonster.Y : currentBattleMapY;
+
+                    SendMonsterDead(delX, delY);
+                }
             }
         }
 
@@ -4771,14 +4799,14 @@ private void ApplyRemoteSkillEffects(string skillName, Monster target)
                 bool hitOther = (otherPlayer != null && newX == otherPlayer.X && newY == otherPlayer.Y);
 
                 // [수정] 포탈 대기 중인 플레이어는 충돌 무시 (유령 취급)
-                if (hitPlayer && player.IsWaitingAtPortal) hitPlayer = false;
-                if (hitOther && otherPlayer != null && otherPlayer.IsWaitingAtPortal) hitOther = false;
+                if (hitPlayer) hitPlayer = false;
+                if (hitOther && otherPlayer != null) hitOther = false;
 
                 if (hitPlayer || hitOther)
                 {
                     // [핵심 수정] 호스트가 포탈에 있는데 동료(게스트)가 맞은 경우
                     // -> 동료에게만 전투를 걸고, 호스트는 관여하지 않음 (몬스터 삭제)
-                    if (player.IsWaitingAtPortal && hitOther)
+                    if (hitOther)
                     {
                         // 1. 패킷 전송 (동료에게 싸우라고 명령)
                         var data = new BattleStartData 
@@ -4822,7 +4850,10 @@ private void ApplyRemoteSkillEffects(string skillName, Monster target)
         var data = new MonsterUpdateData
         {
             XPositions = monsters.Select(m => m.X).ToList(),
-            YPositions = monsters.Select(m => m.Y).ToList()
+            YPositions = monsters.Select(m => m.Y).ToList(),
+            
+            // [신규] 현재 몬스터들의 ID 리스트도 함께 전송
+            MonsterIds = monsters.Select(m => m.MonsterId).ToList()
         };
 
         var packet = new Packet 
@@ -4838,14 +4869,40 @@ private void ApplyRemoteSkillEffects(string skillName, Monster target)
     {
         var data = JsonSerializer.Deserialize<MonsterUpdateData>(json);
         
-        // 몬스터 리스트 순서대로 위치 동기화
-        for (int i = 0; i < monsters.Count; i++)
+        int hostCount = data.XPositions.Count;
+
+        // 1. 몬스터 개수 맞추기
+        // (호스트보다 내 몬스터가 적으면 추가, 많으면 삭제)
+        while (monsters.Count < hostCount)
         {
-            if (i >= data.XPositions.Count) break;
-            
-            monsters[i].X = data.XPositions[i];
-            monsters[i].Y = data.YPositions[i];
+            // 임시 몬스터 추가 (아래에서 ID와 좌표로 덮어씌워짐)
+            monsters.Add(MonsterDB.CreateMonster("slime", 0, 0)); 
         }
+        while (monsters.Count > hostCount)
+        {
+            monsters.RemoveAt(monsters.Count - 1);
+        }
+
+        // 2. 몬스터 정보 동기화
+        for (int i = 0; i < hostCount; i++)
+        {
+            string hostId = data.MonsterIds[i];
+            int hostX = data.XPositions[i];
+            int hostY = data.YPositions[i];
+
+            // [핵심] ID가 다르면 몬스터 객체를 새로 생성하여 교체 (일반 몬스터화 버그 해결)
+            if (monsters[i].MonsterId != hostId)
+            {
+                monsters[i] = MonsterDB.CreateMonster(hostId, hostX, hostY);
+            }
+            else
+            {
+                // ID가 같으면 좌표만 갱신 (부드러운 이동)
+                monsters[i].X = hostX;
+                monsters[i].Y = hostY;
+            }
+        }
+
         NetworkManager.Instance.IsDirty = true;
     }
 
@@ -4917,14 +4974,26 @@ private void ApplyRemoteSkillEffects(string skillName, Monster target)
             int targetX = px + dx[i]; 
             int targetY = py + dy[i];
             
-            // [수정] 
-            // 1. 상자를 찾습니다.
             Chest? targetChest = chests.Find(c => c.X == targetX && c.Y == targetY && !c.IsOpen);
             
             if (targetChest != null) 
             { 
-                // [수정] currentStage 변수를 Open 메서드에 전달합니다.
-                // (이후 Open 메서드가 이 값을 Chest_Confirm으로 넘길 것입니다)
+                // [핵심 수정] 이미 다른 플레이어가 상호작용 중인지 확인
+                if (targetChest.IsBusy)
+                {
+                    AddLog("동료가 상자를 확인하고 있습니다.");
+                    return;
+                }
+
+                // [핵심] 상자 점유 시작 (잠금)
+                targetChest.IsBusy = true;
+                
+                // 멀티플레이라면 잠금 사실 전파
+                if (NetworkManager.Instance.IsConnected || NetworkManager.Instance.IsHost)
+                {
+                    SendChestBusy(targetChest, true);
+                }
+
                 currentTargetChest = targetChest;
                 currentState = GameState.Chest_Confirm;
                 return; 
@@ -5325,18 +5394,29 @@ private void ApplyRemoteSkillEffects(string skillName, Monster target)
     
     private void ProcessChestConfirmAction(bool isOpen)
     {
-        if (isOpen) // (Yes)
+        if (isOpen) // (Yes) -> 열기 진행
         {
             chestAnimStartTime = DateTime.Now; 
             currentState = GameState.Chest_Opening;
+            // (상자가 열리면 IsOpen이 true가 되어 IsBusy 여부와 상관없이 접근 불가하므로 여기서 IsBusy를 굳이 끌 필요 없음)
         }
-        else // (No)
+        else // (No) -> 취소
         {
             AddLog("상자를 열지 않았습니다.");
+            
+            // [핵심 수정] 점유 해제 (잠금 풀기)
+            if (currentTargetChest != null)
+            {
+                currentTargetChest.IsBusy = false;
+                
+                if (NetworkManager.Instance.IsConnected || NetworkManager.Instance.IsHost)
+                {
+                    SendChestBusy(currentTargetChest, false);
+                }
+            }
+
             currentTargetChest = null;
             
-            // 멀티플레이어라면 맵으로, 아니면 월드로 (여기선 공통적으로 World)
-            // 단, 멀티플레이라면 GameState.Multiplayer_World 여야 하므로 주의
             if (NetworkManager.Instance.IsConnected || NetworkManager.Instance.IsHost)
                 currentState = GameState.Multiplayer_World;
             else
@@ -5369,6 +5449,7 @@ private void ApplyRemoteSkillEffects(string skillName, Monster target)
                 // 2. [신규] 멀티플레이라면 상자가 열렸음을 상대에게 알림
                 if (NetworkManager.Instance.IsConnected || NetworkManager.Instance.IsHost)
                 {
+                    Thread.Sleep(100);
                     SendChestUpdate(chest);
                 }
             }
@@ -7377,9 +7458,9 @@ private void ConnectToRoom(RoomInfo room)
                     case PacketType.ChestUpdate:  HandleChestUpdate(packet.Data); break;
                     case PacketType.TrapUpdate:   HandleTrapUpdate(packet.Data); break;
                     case PacketType.MonsterDead:  HandleMonsterDead(packet.Data); break;
-                    case PacketType.PortalEnter: HandlePortalEnter(); break;
                     case PacketType.RoomInfoRequest: HandleRoomInfoRequest(); break;
                     case PacketType.RoomInfoResponse: HandleRoomInfoResponse(packet.Data); break;
+                    case PacketType.ChestBusy: HandleChestBusy(packet.Data); break;
                 }
             }
         }
@@ -7729,19 +7810,21 @@ private void ConnectToRoom(RoomInfo room)
     {
         var data = JsonSerializer.Deserialize<MapInitData>(json);
 
-        // [수정] 맵 크기 정보(width, height)도 함께 전달
         TransitionToStage(data.Stage, data.Seed, data.MapWidth, data.MapHeight);
 
         if (otherPlayer != null)
         {
             otherPlayer.X = data.HostX;
             otherPlayer.Y = data.HostY;
+            
         }
 
         player.X = data.HostX + 1;
         player.Y = data.HostY;
 
-        SendMyPosition();
+        Thread.Sleep(100);
+
+        SendMyPlayerInfo();
         NetworkManager.Instance.IsDirty = true;
     }
    private void HandleDisconnection()
@@ -7900,52 +7983,11 @@ private void ConnectToRoom(RoomInfo room)
             otherPlayer.EquippedGear.Clear();
         }
 
-        // [핵심 수정] 변수 선언 위치: 상태를 업데이트하기 '전'에 미리 계산해야 함
-        bool wasWaiting = (otherPlayer != null && otherPlayer.IsWaitingAtPortal); // 이전 상태
-        bool isNowBack = !info.IsWaitingAtPortal; // 현재 상태 (포탈에서 나옴)
-
-        // 2. 스탯 및 상태 동기화
+        // 2. 스탯 동기화
         otherPlayer.baseMaxHP = info.MaxHP;
         otherPlayer.baseDEF = info.DEF;
         otherPlayer.baseDEX = info.DEX;
         otherPlayer.HP = info.HP;
-        
-        // 포탈 상태 업데이트
-        otherPlayer.IsWaitingAtPortal = info.IsWaitingAtPortal;
-
-        // [핵심 수정] 3. 전투 중 난입 처리
-        // (변수 wasWaiting, isNowBack이 위에서 선언되었으므로 에러가 나지 않음)
-        if (currentState == GameState.Multiplayer_Battle && wasWaiting && isNowBack)
-        {
-            AddLog("동료가 전장에 합류했습니다!", ConsoleColor.Cyan);
-            
-            // 1. 솔로 모드 해제
-            isSoloModeInMultiplayer = false;
-
-            // 2. 동료에게 현재 전투 정보 전송 (초대)
-            if (currentBattleMonster != null)
-            {
-                var battleData = new BattleStartData
-                {
-                    MonsterId = currentBattleMonster.MonsterId,
-                    IsFromTrap = isTrapBattle,
-                    MapX = currentBattleMapX,
-                    MapY = currentBattleMapY,
-                    CurrentHP = currentBattleMonster.HP,
-                    
-                    // [신규] 스탯 동기화
-                    MaxHP = currentBattleMonster.MaxHP,
-                    ATK = currentBattleMonster.ATK,
-                    DEF = currentBattleMonster.DEF,
-                    EXPReward = currentBattleMonster.EXPReward
-                };
-                NetworkManager.Instance.Send(new Packet 
-                { 
-                    Type = PacketType.BattleStart, 
-                    Data = JsonSerializer.Serialize(battleData) 
-                });
-            }
-        }
 
         // 4. 입장 메시지
         if (isNewUser)
@@ -7981,9 +8023,7 @@ private void ConnectToRoom(RoomInfo room)
             HP = hasPlayer ? player.HP : 0,
             MaxHP = hasPlayer ? player.MaxHP : 0,
             DEX = hasPlayer ? player.DEX : 0,
-            DEF = hasPlayer ? player.DEF : 0,
-
-            IsWaitingAtPortal = hasPlayer ? player.IsWaitingAtPortal : false
+            DEF = hasPlayer ? player.DEF : 0
         };
 
         var packet = new Packet 
@@ -8326,10 +8366,11 @@ private void SendMyPosition()
             return;
         }
 
-        // [핵심 수정] 2번 요청 해결: 턴 순서 재결정 시 'count++' 삭제
-        if (otherPlayer == null || isSoloModeInMultiplayer) 
+        bool isFightingSolo = (otherPlayer == null || otherPlayer.IsDead);
+
+        if (isFightingSolo) 
         {
-            isMyBattleTurn = !amIDead; 
+            isMyBattleTurn = !player.IsDead; 
         }
         else 
         {
@@ -8355,7 +8396,7 @@ private void SendMyPosition()
 
         AddLog("==============================", ConsoleColor.DarkGray);
         if (isMyBattleTurn) AddLog("새 라운드! 당신의 턴입니다.", ConsoleColor.Green);
-        else if (!amIDead && !isOtherDead && !isSoloModeInMultiplayer) AddLog("새 라운드! 동료의 턴입니다.", ConsoleColor.Yellow);
+        else if (!amIDead && !isOtherDead && !isFightingSolo) AddLog("새 라운드! 동료의 턴입니다.", ConsoleColor.Yellow);
         
         NetworkManager.Instance.IsDirty = true;
     }
@@ -8370,7 +8411,6 @@ private void SendMyPosition()
     private void HandleBattleEnd()
     {
         // [핵심 수정] 내가 포탈 대기 중이라면 전투 종료 패킷 무시
-        if (currentState == GameState.Multiplayer_PortalWait) return;
 
         FleeBattle();
     }
@@ -8383,19 +8423,15 @@ private void SendMyPosition()
 
     private void EndMultiplayerBattle()
     {
-        // [핵심] 대기까지 모두 끝난 이 시점에 몬스터 정보를 비웁니다.
         currentBattleMonster = null; 
-        
         currentState = GameState.Multiplayer_World;
         
-        // 상태 초기화
         battleTurnCount = 0;
         myFleeRequest = false;
         otherFleeRequest = false;
         
-        // 몬스터 이동 타이머 리셋
         lastMonsterMoveTime = DateTime.Now;
-        
+
         NetworkManager.Instance.IsDirty = true;
     }
 
@@ -8479,6 +8515,8 @@ private void ProcessCountdownLogic()
                 MapWidth = this.MapWidth,
                 MapHeight = this.MapHeight
             };
+
+            Thread.Sleep(100);
             
             var packet = new Packet 
             { 
@@ -8596,18 +8634,14 @@ private void ProcessCountdownLogic()
         }
     }
 
-    private void HandleTrapUpdate(string json)
+   private void HandleTrapUpdate(string json)
     {
         var data = JsonSerializer.Deserialize<TrapUpdateData>(json);
         Trap? trap = traps.Find(t => t.X == data.X && t.Y == data.Y);
 
         if (trap != null)
         {
-            // 함정을 '발동된 상태'로 변경
-            // Trap.cs 수정을 통해 ForceTrigger 메서드 추가 필요
-            trap.ForceTrigger(this);
-
-            AddLog("동료가 함정을 작동시켰습니다.");
+            trap.ForceTrigger(this); // 여기서 맵 타일 갱신
             NetworkManager.Instance.IsDirty = true;
         }
     }
@@ -8627,12 +8661,30 @@ private void ProcessCountdownLogic()
     {
         var data = JsonSerializer.Deserialize<MonsterDeadData>(json);
         
-        // 해당 좌표의 몬스터를 찾아서 내 리스트(게스트)에서도 삭제
+        // 1. 몬스터 삭제
         var target = monsters.FirstOrDefault(m => m.X == data.X && m.Y == data.Y);
+        
+        // (좌표 오차 보정 검색)
+        if (target == null)
+        {
+            target = monsters.FirstOrDefault(m => Math.Abs(m.X - data.X) <= 1 && Math.Abs(m.Y - data.Y) <= 1);
+        }
+
         if (target != null)
         {
             monsters.Remove(target);
-            NetworkManager.Instance.IsDirty = true; // 맵 갱신 요청
+            NetworkManager.Instance.IsDirty = true;
+        }
+
+        // [핵심 수정] 2. 해당 좌표에 '함정'이 있다면 같이 삭제 (안전장치)
+        // 몬스터가 죽었다는 건 함정도 발동했다는 뜻이므로 강제 제거
+        var trap = traps.FirstOrDefault(t => t.X == data.X && t.Y == data.Y);
+        if (trap != null && !trap.IsTriggered)
+        {
+            trap.ForceTrigger(this);
+            NetworkManager.Instance.IsDirty = true;
+
+            // (호스트라면 다른 게스트에게도 전파 가능하지만, 현재는 불필요)
         }
     }
 
@@ -8651,7 +8703,7 @@ private void ProcessCountdownLogic()
 
     private void FinishBattleResultSequence()
     {
-        // 1. 싱글플레이 처리
+        // 1. 싱글플레이
         if (!NetworkManager.Instance.IsConnected && !NetworkManager.Instance.IsHost)
         {
             currentBattleMonster = null; 
@@ -8659,20 +8711,22 @@ private void ProcessCountdownLogic()
             return;
         }
 
-        // [핵심 수정] 패킷 전송을 가장 먼저 수행합니다.
-        // 내가 솔로 모드(동료 사망)라서 바로 나가더라도, 
-        // 대기 중인 동료(시체)에게 "전투 끝났다"는 신호를 보내줘야 동료도 같이 나갈 수 있습니다.
+        // [핵심 수정] TCP 패킷 뭉침 방지를 위한 미세 지연
+        // (이전 패킷들과 섞이지 않도록 잠시 대기 후 전송)
+        Thread.Sleep(100); 
+
+        // 2. 종료 신호 전송
         var packet = new Packet { Type = PacketType.BattleResultFinished };
         NetworkManager.Instance.Send(packet);
 
-        // 2. 솔로 모드(동료 부재/사망)인 경우 즉시 종료
-        if (isSoloModeInMultiplayer)
+        // 3. 솔로 모드(동료 부재/사망)인 경우 즉시 종료
+        if (otherPlayer == null || otherPlayer.IsDead)
         {
             EndMultiplayerBattle();
             return;
         }
 
-        // 3. 협동 모드라면 대기 상태 진입
+        // 4. 협동 모드라면 대기 상태 진입
         currentState = GameState.Multiplayer_BattleResultWait;
         CheckBattleResultSync();
     }
@@ -8824,6 +8878,8 @@ private void ProcessCountdownLogic()
                 MapWidth = this.MapWidth,
                 MapHeight = this.MapHeight
             };
+
+            Thread.Sleep(100);
             
             NetworkManager.Instance.Send(new Packet { 
                 Type = PacketType.MapInit, 
@@ -8834,72 +8890,9 @@ private void ProcessCountdownLogic()
         {
             // 게스트는 호스트가 MapInit을 보낼 때까지 대기
             // (이미 PortalWait 상태라면 그대로 있고, 아니라면 대기 화면 띄움)
-            currentState = GameState.Multiplayer_PortalWait;
         }
     }
 
-    private void HandlePortalEnter()
-    {
-        isOtherPlayerAtPortal = true;
-        if (otherPlayer != null)
-        {
-            otherPlayer.IsWaitingAtPortal = true;
-        }
-        AddLog("동료가 포탈에 도착했습니다.");
-
-        // [핵심 수정] 
-        // 1. 나도 이미 포탈 대기 중이었다면 -> 이제 둘 다 모였으니 이동 시작
-        // 2. 특히 '호스트'라면 주도적으로 맵을 넘겨야 함
-        if (currentState == GameState.Multiplayer_PortalWait)
-        {
-            // 내가 호스트라면 즉시 다음 스테이지 진행 (MapInit 전송)
-            if (NetworkManager.Instance.IsHost)
-            {
-                ProceedToNextStageMultiplayer();
-            }
-            // 게스트라면? 호스트가 MapInit 보낼 때까지 그냥 계속 대기하면 됨
-        }
-        
-        NetworkManager.Instance.IsDirty = true;
-    }
-
-    private void DrawPortalWait()
-    {
-        // [수정] 배경을 맵(DrawWorldLayout)이 아닌 검은색으로 덮음
-        DrawFilledBox(0, 0, screenWidth, screenHeight, ConsoleColor.Black);
-
-        int width = 40;
-        int height = 10; // 높이 약간 증가
-        int startX = screenWidth / 2 - width / 2;
-        int startY = screenHeight / 2 - height / 2;
-
-        DrawBox(startX, startY, width, height, "이동 대기 중");
-
-        string msg = "동료를 기다리는 중...";
-        int dotCount = (DateTime.Now.Millisecond / 500) % 4;
-        
-        DrawTextToBuffer(startX + width/2 - GetDisplayWidth(msg)/2, startY + 3, msg + new string('.', dotCount), ConsoleColor.Cyan);
-
-        // [신규] 복귀 버튼 안내
-        string backMsg = "[B] 돌아가기";
-        DrawTextToBuffer(startX + width/2 - GetDisplayWidth(backMsg)/2, startY + 6, backMsg, ConsoleColor.Yellow);
-    }
-
-    private void ProcessPortalWaitInput(ConsoleKeyInfo key)
-    {
-        // [B] 키를 눌러 복귀
-        if (key.Key == ConsoleKey.B || key.Key == ConsoleKey.Escape)
-        {
-            // 1. 상태 복구
-            player.IsWaitingAtPortal = false;
-            SendMyPlayerInfo(); // 상대에게 "나 돌아왔어" 알림
-
-            // 2. 화면 복귀 (전투 중이었다면? -> 그래도 일단 World로 감. 
-            //    요청사항: "다음 전투부터 참여". 현재 진행 중인 전투에는 참여 안 함)
-            currentState = GameState.Multiplayer_World;
-            AddLog("맵으로 돌아왔습니다.");
-        }
-    }
 
     private void SetupBattleIntro(Monster monster, bool isFromTrap)
     {
@@ -9045,6 +9038,7 @@ private void ProcessCountdownLogic()
         if (NetworkManager.Instance.IsConnected || NetworkManager.Instance.IsHost)
         {
             // (기존 SendTrapUpdate 로직 재활용 또는 직접 구현)
+            Thread.Sleep(50);
             var data = new TrapUpdateData { X = trap.X, Y = trap.Y, IsTriggered = trap.IsTriggered };
             var packet = new Packet { Type = PacketType.TrapUpdate, Data = JsonSerializer.Serialize(data) };
             NetworkManager.Instance.Send(packet);
@@ -9057,6 +9051,7 @@ private void ProcessCountdownLogic()
         // A. 멀티플레이 동기화 (내 체력이 깎였음을 알림)
         if (NetworkManager.Instance.IsConnected || NetworkManager.Instance.IsHost)
         {
+            Thread.Sleep(50);
             SendMyPlayerInfo(); 
         }
 
@@ -9303,6 +9298,98 @@ private void ProcessCountdownLogic()
         
         string msg = "방 정보를 확인하고 있습니다...";
         DrawTextToBuffer(startX + 2, startY + 3, msg, ConsoleColor.White);
+    }
+
+    private void SendChestBusy(Chest chest, bool isBusy)
+    {
+        var data = new ChestBusyData { X = chest.X, Y = chest.Y, IsBusy = isBusy };
+        var packet = new Packet { Type = PacketType.ChestBusy, Data = JsonSerializer.Serialize(data) };
+        NetworkManager.Instance.Send(packet);
+    }
+
+    // 2. 점유 상태 수신
+    private void HandleChestBusy(string json)
+    {
+        var data = JsonSerializer.Deserialize<ChestBusyData>(json);
+        
+        // 해당 좌표의 상자를 찾음
+        Chest? chest = chests.Find(c => c.X == data.X && c.Y == data.Y);
+        
+        if (chest != null)
+        {
+            chest.IsBusy = data.IsBusy;
+            
+            // (선택사항) 시각적 피드백을 위해 로그 출력? (너무 자주 뜨면 방해되니 생략)
+            // if (chest.IsBusy) AddLog("동료가 상자를 살펴보고 있습니다.");
+        }
+    }
+
+    private void ForceCloseChestUI()
+    {
+        // 상자 관련 상태일 때만 작동
+        if (currentState == GameState.Chest_Confirm || currentState == GameState.Chest_Opening)
+        {
+            // 점유 해제 및 패킷 전송
+            if (currentTargetChest != null)
+            {
+                currentTargetChest.IsBusy = false;
+                
+                if (NetworkManager.Instance.IsConnected || NetworkManager.Instance.IsHost)
+                {
+                    var data = new ChestBusyData { X = currentTargetChest.X, Y = currentTargetChest.Y, IsBusy = false };
+                    var packet = new Packet { Type = PacketType.ChestBusy, Data = JsonSerializer.Serialize(data) };
+                    NetworkManager.Instance.Send(packet);
+                }
+            }
+            
+            // 데이터 초기화
+            currentTargetChest = null;
+            
+            // 로그 알림
+            AddLog("전투가 발생하여 상자 열기가 취소되었습니다!");
+        }
+    }
+
+    private bool IsInPortalRange(Player p)
+    {
+        if (p == null || portalPosition.x == -1) return false;
+
+        int dx = p.X - portalPosition.x;
+        int dy = p.Y - portalPosition.y;
+        int distSq = dx * dx + dy * dy;
+
+        return distSq <= PORTAL_DETECTION_RANGE_SQ;
+    }
+
+    // [핵심] 멀티플레이 포탈 이동 조건 체크 (호스트 전용)
+    private void CheckMultiplayerPortalCondition()
+    {
+        // 호스트만 판정
+        if (!NetworkManager.Instance.IsHost) return;
+        
+        if (currentStage >= 3) return; 
+
+        // [핵심 수정] "내가 죽었거나" 포탈 범위에 있으면 OK
+        bool amIReady = player.IsDead || IsInPortalRange(player);
+        
+        bool otherReady = false;
+        if (otherPlayer != null)
+        {
+            // [핵심 수정] "동료가 죽었거나" 포탈 범위에 있으면 OK
+            otherReady = otherPlayer.IsDead || IsInPortalRange(otherPlayer);
+        }
+
+        // [안전장치] 둘 다 죽은 상태에서 이동하는 걸 막기 위해(게임오버겠지만),
+        // 적어도 한 명은 '살아서 포탈 범위 내에' 있어야 한다는 조건 추가
+        bool anyoneActiveAtPortal = (IsInPortalRange(player) && !player.IsDead) || 
+                                    (otherPlayer != null && IsInPortalRange(otherPlayer) && !otherPlayer.IsDead);
+
+        // [조건 충족]
+        if (amIReady && otherReady && anyoneActiveAtPortal)
+        {
+            AddLog("다음 스테이지로 이동합니다!");
+            ProceedToNextStageMultiplayer();
+        }
     }
     
     #endregion

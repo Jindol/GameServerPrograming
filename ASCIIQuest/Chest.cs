@@ -35,6 +35,9 @@ public class Chest
     /// </summary>
     public ConsoleColor Color { get; private set; }
 
+// [신규] 누군가 상호작용 창을 띄우고 있는지 여부
+    public bool IsBusy { get; set; } = false;
+
     // --- 확률 상수 ---
     
     // 상자가 함정일 확률 (15%)

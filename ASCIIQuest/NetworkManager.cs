@@ -231,37 +231,50 @@ public class NetworkManager
     private void ReceiveLoop(TcpClient socket)
     {
         NetworkStream netStream = socket.GetStream();
-        byte[] buffer = new byte[4096];
-
+        
         try
         {
             while (socket.Connected)
             {
-                // 1. 데이터 읽기
-                int bytesRead = netStream.Read(buffer, 0, buffer.Length);
-                if (bytesRead == 0) throw new Exception("Disconnected"); // 0바이트면 정상 종료
+                // [Step 1] 길이 헤더(4바이트) 먼저 읽기
+                byte[] lengthBuffer = new byte[4];
+                int totalRead = 0;
+                while (totalRead < 4)
+                {
+                    int read = netStream.Read(lengthBuffer, totalRead, 4 - totalRead);
+                    if (read == 0) throw new Exception("Disconnected"); // 연결 끊김
+                    totalRead += read;
+                }
+                
+                int dataLength = BitConverter.ToInt32(lengthBuffer, 0);
 
-                // 2. 유효한 데이터만 복사
-                byte[] data = new byte[bytesRead];
-                Array.Copy(buffer, data, bytesRead);
+                // [Step 2] 본문 데이터(dataLength 만큼) 읽기
+                byte[] dataBuffer = new byte[dataLength];
+                totalRead = 0;
+                while (totalRead < dataLength)
+                {
+                    int read = netStream.Read(dataBuffer, totalRead, dataLength - totalRead);
+                    if (read == 0) throw new Exception("Disconnected");
+                    totalRead += read;
+                }
 
-                // [핵심 수정] 패킷 해석 시 에러가 나도 연결을 끊지 않음
+                // [Step 3] 역직렬화 및 큐 저장
                 try 
                 {
-                    Packet packet = Packet.Deserialize(data);
+                    Packet packet = Packet.Deserialize(dataBuffer);
                     lock (QueueLock) PacketQueue.Enqueue(packet);
                     IsDirty = true;
                 }
                 catch (JsonException) 
                 { 
-                    // JSON 파싱 에러(패킷 뭉침 등)는 무시하고 넘어감
-                    // (완벽한 해결을 위해선 패킷 길이 헤더 처리가 필요하지만, 약식으로 이렇게 처리)
+                    // JSON 파싱 에러가 나더라도 스트림 위치는 맞췄으므로 다음 패킷 처리가 가능
+                    Console.WriteLine("Packet Parse Error");
                 }
             }
         }
         catch (Exception)
         { 
-            // 진짜 연결 문제(소켓 오류, 강제 종료)일 때만 Disconnect 처리
+            // 연결 종료 처리
             lock (QueueLock)
             {
                 PacketQueue.Enqueue(new Packet { Type = PacketType.Disconnect });
@@ -281,13 +294,24 @@ public class NetworkManager
         {
             if (!IsConnected && !IsHost) return;
             
-            byte[] data = Packet.Serialize(packet);
-            NetworkStream targetStream = null;
+            // 패킷 직렬화
+            byte[] jsonBytes = Packet.Serialize(packet);
+            
+            // 패킷 길이(헤더) 생성 (int -> 4바이트)
+            byte[] lengthBytes = BitConverter.GetBytes(jsonBytes.Length);
+            
+            // [길이 헤더] + [본문 데이터] 합치기
+            byte[] finalPacket = new byte[4 + jsonBytes.Length];
+            Array.Copy(lengthBytes, 0, finalPacket, 0, 4);
+            Array.Copy(jsonBytes, 0, finalPacket, 4, jsonBytes.Length);
 
+            // 전송 대상 스트림 결정
+            NetworkStream targetStream = null;
             if (IsHost && GuestClient != null) targetStream = GuestClient.GetStream();
             else if (!IsHost && stream != null) targetStream = stream;
 
-            targetStream?.Write(data, 0, data.Length);
+            // 전송
+            targetStream?.Write(finalPacket, 0, finalPacket.Length);
         }
         catch { }
     }

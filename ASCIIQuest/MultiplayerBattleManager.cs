@@ -557,7 +557,7 @@ public static class MultiplayerBattleManager
         // (타겟 결정 로직 기존과 동일)
         bool myDeath = game.player.IsDead;
         bool otherDeath = (game.OtherPlayer != null && game.OtherPlayer.IsDead);
-        bool otherAbsent = (game.OtherPlayer == null || game.OtherPlayer.IsWaitingAtPortal);
+        bool otherAbsent = (game.OtherPlayer == null);
 
         // 실제 타겟 가능 여부 (호스트/게스트 기준)
         bool hostAlive, guestAlive;
@@ -619,6 +619,8 @@ public static class MultiplayerBattleManager
         string json = JsonSerializer.Serialize(data);
         NetworkManager.Instance.Send(new Packet { Type = PacketType.EnemyAction, Data = json });
 
+        System.Threading.Thread.Sleep(50);
+
         // 6. 로컬 처리
         OnReceiveEnemyAction(game, data); 
     }
@@ -635,6 +637,9 @@ public static class MultiplayerBattleManager
         };
         string json = JsonSerializer.Serialize(data);
         NetworkManager.Instance.Send(new Packet { Type = PacketType.EnemyAction, Data = json });
+
+        // [핵심 수정] 패킷 전송 후 잠시 대기 (뭉침 방지)
+        System.Threading.Thread.Sleep(50); 
     }
 
 

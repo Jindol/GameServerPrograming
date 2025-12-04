@@ -27,9 +27,9 @@ public enum PacketType
     MonsterDead,
     // [신규] 전투 결과창(루팅/레벨업) 종료 확인 패킷
     BattleResultFinished,
-    PortalEnter,
     RoomInfoRequest,
-    RoomInfoResponse
+    RoomInfoResponse,
+    ChestBusy
 }
 
 [Serializable]
@@ -52,6 +52,13 @@ public class Packet
 }
 
 // --- 데이터 클래스들 ---
+
+public class ChestBusyData
+{
+    public int X { get; set; }
+    public int Y { get; set; }
+    public bool IsBusy { get; set; } // true: 사용 중(잠금), false: 사용 끝(해제)
+}
 
 public class MapInitData
 {
@@ -84,6 +91,8 @@ public class MonsterUpdateData
     // (몬스터 리스트의 인덱스 순서대로 좌표를 보냄)
     public List<int> XPositions { get; set; }
     public List<int> YPositions { get; set; }
+
+    public List<string> MonsterIds { get; set; }
 }
 
 public class ChatData
@@ -107,7 +116,6 @@ public class PlayerInfoData
 
     public int DEF { get; set; }
 
-    public bool IsWaitingAtPortal { get; set; }
 }
 
 [Serializable]

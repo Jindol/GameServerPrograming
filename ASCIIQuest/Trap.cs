@@ -109,6 +109,9 @@ public class Trap
                 // (미믹 대신 일반 랜덤 몬스터 생성 - 기존 로직 유지)
                 Monster trapMonster = MonsterDB.CreateRandomMonster(0, 0, rand, currentStage);                
                 
+                trapMonster.X = this.X;
+                trapMonster.Y = this.Y;
+                
                 // 전투 시작 (isFromTrap: true)
                 game.StartBattle(trapMonster, true); 
                 break;

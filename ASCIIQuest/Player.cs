@@ -221,9 +221,6 @@ public class Player
     /// </summary>
     public int LevelsGainedThisTurn { get; private set; } = 0;
 
-
-    public bool IsWaitingAtPortal { get; set; } = false;
-
     /// <summary>
     /// 새 플레이어 인스턴스를 생성하고, `SetInitialStats`를 호출하여 초기화합니다.
     /// </summary>
